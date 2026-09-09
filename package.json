@@ -1,0 +1,12 @@
+{
+  "name": "rns-update",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lightweight site that pulls financial-report RNS disclosures for a watchlist of companies via the Ticker API.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
