@@ -7,9 +7,19 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header>
-    <h1>RNS Update</h1>
-    <p>Company report disclosures for the time period and types below — sourced directly from the FCA's National Storage Mechanism, no API key required.</p>
+  <header class="header-top">
+    <div>
+      <h1>RNS Update</h1>
+      <p>Company report disclosures for the time period and types below — sourced directly from the FCA's National Storage Mechanism, no API key required.</p>
+    </div>
+    <label class="theme-toggle">
+      Theme
+      <select id="theme-select">
+        <option value="auto">Auto</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </label>
   </header>
 
   <div class="layout">
@@ -23,6 +33,13 @@
         </form>
         <p id="lei-error" class="error" hidden></p>
         <ul id="company-list"></ul>
+
+        <div class="watchlist-io">
+          <button type="button" id="watchlist-export">Export list</button>
+          <button type="button" id="watchlist-import-btn">Import list</button>
+          <input type="file" id="watchlist-import-file" accept="application/json" hidden />
+        </div>
+        <p id="watchlist-io-status" class="hint" hidden></p>
 
         <details id="bulk-add">
           <summary>Add multiple by ISIN</summary>
@@ -87,6 +104,16 @@
           <button type="button" id="export-csv">Download CSV</button>
           <button id="refresh">Refresh</button>
         </div>
+      </div>
+      <div id="reports-controls">
+        <input type="text" id="report-filter" placeholder="Filter by company or title…" autocomplete="off" />
+        <select id="sort-select">
+          <option value="date-desc">Newest first</option>
+          <option value="date-asc">Oldest first</option>
+          <option value="company-asc">Company A-Z</option>
+          <option value="company-desc">Company Z-A</option>
+        </select>
+        <label class="checkbox-row"><input type="checkbox" id="hide-reviewed" /> Hide reviewed</label>
       </div>
       <ul id="reports"></ul>
 

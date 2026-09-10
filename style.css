@@ -8,15 +8,34 @@
   --accent: #1a5fb4;
 }
 
+/* Follows the OS preference by default. An explicit choice from the
+   Theme select overrides this via [data-theme] on <html> - the
+   :not([data-theme="light"]) guard stops the OS-dark media query from
+   fighting an explicit "Light" choice while the OS itself is in dark mode. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --fg: #eee;
     --bg: #181818;
     --panel-bg: #1f1f1f;
     --muted: #aaa;
     --border: #333;
     --accent: #6ba8f5;
+    color-scheme: dark;
   }
+}
+
+:root[data-theme="dark"] {
+  --fg: #eee;
+  --bg: #181818;
+  --panel-bg: #1f1f1f;
+  --muted: #aaa;
+  --border: #333;
+  --accent: #6ba8f5;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -34,6 +53,32 @@ body {
 header { margin-bottom: 1.25rem; }
 header h1 { margin-bottom: 0.25rem; font-size: 1.4rem; }
 header p { color: var(--muted); margin-top: 0; font-size: 0.9rem; }
+
+.header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.theme-toggle select {
+  font: inherit;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+}
 
 button {
   font: inherit;
@@ -143,6 +188,19 @@ button:hover { border-color: var(--accent); }
 
 .history-company { background: transparent; }
 
+.watchlist-io {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.watchlist-io button { font-size: 0.8rem; flex: 1 1 0; }
+
+#watchlist-io-status {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 #bulk-add { margin-top: 0.75rem; }
 #bulk-add summary { cursor: pointer; color: var(--accent); font-size: 0.85rem; }
 #bulk-add[open] summary { margin-bottom: 0.5rem; }
@@ -245,6 +303,36 @@ button:hover { border-color: var(--accent); }
 
 #status { color: var(--muted); margin: 0; }
 
+#reports-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+#report-filter {
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+#sort-select {
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+}
+
+#reports-controls .checkbox-row { padding: 0; white-space: nowrap; }
+
 #reports {
   list-style: none;
   padding: 0;
@@ -290,6 +378,14 @@ button:hover { border-color: var(--accent); }
 .report-title a:hover { text-decoration: underline; }
 
 .report-meta { font-size: 0.85rem; color: var(--muted); }
+
+.report-actions { margin-top: 0.5rem; }
+
+.review-toggle { font-size: 0.75rem; padding: 0.25rem 0.6rem; }
+
+.report-reviewed {
+  opacity: 0.55;
+}
 
 .empty { color: var(--muted); list-style: none; }
 

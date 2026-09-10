@@ -1,11 +1,17 @@
 const STORAGE_KEY = 'rns-watchlist';
 const SETTINGS_KEY = 'rns-settings';
 const SEEN_KEY = 'rns-seen-reports';
+const REVIEWED_KEY = 'rns-reviewed-reports';
 const HISTORY_CACHE_KEY = 'rns-history-cache';
+const SORT_KEY = 'rns-sort';
+const THEME_KEY = 'rns-theme';
 const LEI_RE = /^[A-Z0-9]{20}$/;
 const DEFAULT_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report'];
 const KNOWN_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report', 'Net Asset Value(s)', 'Dividend Declaration'];
 const MAX_SEEN = 1000;
+const MAX_REVIEWED = 1000;
+const SORT_OPTIONS = ['date-desc', 'date-asc', 'company-asc', 'company-desc'];
+const THEME_OPTIONS = ['auto', 'light', 'dark'];
 // Same TTL philosophy as the server's NSM cache (NSM_CACHE_TTL_MINUTES) but
 // entirely client-side: re-opening the same company's history within this
 // window reuses what's already in localStorage instead of hitting
@@ -20,6 +26,7 @@ const HISTORY_CACHE_TTL_MS = HISTORY_CACHE_TTL_MINUTES * 60 * 1000;
 const HISTORY_CACHE_PRUNE_MS = 24 * 60 * 60 * 1000;
 
 let lastReports = [];
+let lastNewKeys = new Set();
 let autoRefreshTimer = null;
 let currentHistoryLei = null;
 let currentHistoryName = null;
@@ -123,6 +130,77 @@ function saveSeen(set) {
   // recently seen entries.
   const arr = [...set].slice(-MAX_SEEN);
   localStorage.setItem(SEEN_KEY, JSON.stringify(arr));
+}
+
+// Manually-marked "reviewed" reports - distinct from the automatic seen/new
+// tracking above. Seen/new answers "has this appeared since I last looked";
+// reviewed answers "have I actually dealt with this one", and only changes
+// when you click the button, not just by loading the page.
+function loadReviewed() {
+  try {
+    const raw = localStorage.getItem(REVIEWED_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveReviewed(set) {
+  const arr = [...set].slice(-MAX_REVIEWED);
+  localStorage.setItem(REVIEWED_KEY, JSON.stringify(arr));
+}
+
+function loadSort() {
+  const v = localStorage.getItem(SORT_KEY);
+  return SORT_OPTIONS.includes(v) ? v : 'date-desc';
+}
+
+function saveSort(v) {
+  localStorage.setItem(SORT_KEY, v);
+}
+
+function sortReports(reports, sortBy) {
+  const arr = reports.slice();
+  switch (sortBy) {
+    case 'date-asc':
+      arr.sort((a, b) => new Date(a.publishedAt || 0) - new Date(b.publishedAt || 0));
+      break;
+    case 'company-asc':
+      arr.sort((a, b) => a.company.localeCompare(b.company));
+      break;
+    case 'company-desc':
+      arr.sort((a, b) => b.company.localeCompare(a.company));
+      break;
+    case 'date-desc':
+    default:
+      arr.sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
+  }
+  return arr;
+}
+
+function loadTheme() {
+  const t = localStorage.getItem(THEME_KEY);
+  return THEME_OPTIONS.includes(t) ? t : 'auto';
+}
+
+function applyTheme(theme) {
+  if (theme === 'auto') {
+    document.documentElement.removeAttribute('data-theme');
+  } else {
+    document.documentElement.setAttribute('data-theme', theme);
+  }
+}
+
+function initTheme() {
+  const select = document.getElementById('theme-select');
+  const theme = loadTheme();
+  select.value = theme;
+  applyTheme(theme);
+  select.addEventListener('change', () => {
+    localStorage.setItem(THEME_KEY, select.value);
+    applyTheme(select.value);
+  });
 }
 
 // Per-company filing history cache, keyed by LEI: { [lei]: { items,
@@ -237,6 +315,18 @@ function toCsvField(value) {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
+function downloadBlob(content, mime, filename) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function exportCsv() {
   if (lastReports.length === 0) return;
 
@@ -250,15 +340,159 @@ function exportCsv() {
   ].map(toCsvField).join(','));
 
   const csv = [header.join(','), ...rows].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `rns-reports-${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  downloadBlob(csv, 'text/csv;charset=utf-8', `rns-reports-${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
+function exportWatchlist() {
+  const watchlist = loadWatchlist();
+  downloadBlob(
+    JSON.stringify(watchlist, null, 2),
+    'application/json',
+    `rns-watchlist-${new Date().toISOString().slice(0, 10)}.json`
+  );
+}
+
+async function importWatchlistFile(file) {
+  const statusEl = document.getElementById('watchlist-io-status');
+  statusEl.hidden = false;
+
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) throw new Error('Expected a JSON array of {"lei", "name"} entries.');
+
+    const valid = parsed
+      .filter((c) => c && typeof c.lei === 'string' && LEI_RE.test(c.lei.toUpperCase()))
+      .map((c) => ({ lei: c.lei.toUpperCase(), name: (c.name || '').trim() }));
+
+    if (valid.length === 0) {
+      statusEl.textContent = 'No valid entries found in that file (expected {"lei": "...", "name": "..."} objects).';
+      return;
+    }
+
+    const watchlist = loadWatchlist();
+    const existingLeis = new Set(watchlist.map((c) => c.lei));
+    let added = 0;
+    for (const c of valid) {
+      if (!existingLeis.has(c.lei)) {
+        watchlist.push(c);
+        existingLeis.add(c.lei);
+        added++;
+      }
+    }
+
+    saveWatchlist(watchlist);
+    renderWatchlist();
+    const skipped = parsed.length - valid.length;
+    statusEl.textContent = `Imported ${added} new compan${added === 1 ? 'y' : 'ies'} (${valid.length - added} already in your list${skipped ? `, ${skipped} invalid entr${skipped === 1 ? 'y' : 'ies'} skipped` : ''}).`;
+    if (added > 0) loadReports();
+  } catch (err) {
+    statusEl.textContent = `Failed to import: ${err.message || err}`;
+  }
+}
+
+function renderReportsList() {
+  const listEl = document.getElementById('reports');
+  const filterInput = document.getElementById('report-filter');
+  const sortSelect = document.getElementById('sort-select');
+  const hideReviewedCheckbox = document.getElementById('hide-reviewed');
+
+  if (lastReports.length === 0) {
+    listEl.innerHTML = '<li class="empty">No matching reports in the selected time period.</li>';
+    return;
+  }
+
+  const filterText = filterInput.value.trim().toLowerCase();
+  const reviewed = loadReviewed();
+
+  let visible = lastReports.filter(
+    (r) => !filterText || r.company.toLowerCase().includes(filterText) || r.title.toLowerCase().includes(filterText)
+  );
+  if (hideReviewedCheckbox.checked) visible = visible.filter((r) => !reviewed.has(reportKey(r)));
+  visible = sortReports(visible, sortSelect.value);
+
+  listEl.innerHTML = '';
+  if (visible.length === 0) {
+    listEl.innerHTML = '<li class="empty">No reports match your filter.</li>';
+    return;
+  }
+
+  for (const report of visible) {
+    const key = reportKey(report);
+    const isNew = lastNewKeys.has(key);
+    const isReviewed = reviewed.has(key);
+    const li = document.createElement('li');
+    li.className = ['report', isNew ? 'report-new' : '', isReviewed ? 'report-reviewed' : ''].filter(Boolean).join(' ');
+    const date = report.publishedAt ? new Date(report.publishedAt).toLocaleString() : 'Unknown date';
+    const titleHtml = report.url
+      ? `<a href="${escapeHtml(report.url)}" target="_blank" rel="noopener">${escapeHtml(report.title)}</a>`
+      : escapeHtml(report.title);
+
+    li.innerHTML = `
+      <div class="report-company">${escapeHtml(report.company)}${isNew ? '<span class="new-badge">NEW</span>' : ''}</div>
+      <div class="report-title">${titleHtml}</div>
+      <div class="report-meta">${escapeHtml(report.category || '')} · ${escapeHtml(date)}</div>
+      <div class="report-actions">
+        <button type="button" class="review-toggle" data-key="${escapeHtml(key)}">${isReviewed ? '✓ Reviewed' : 'Mark reviewed'}</button>
+      </div>
+    `;
+    listEl.appendChild(li);
+  }
+
+  listEl.querySelectorAll('.review-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const set = loadReviewed();
+      if (set.has(btn.dataset.key)) set.delete(btn.dataset.key);
+      else set.add(btn.dataset.key);
+      saveReviewed(set);
+      renderReportsList();
+    });
+  });
+}
+
+// Merges companies/settings carried in the URL's query string (see
+// syncUrlWithState, called at the end of every successful loadReports())
+// into whatever's already saved - purely additive for companies (never
+// removes or replaces an existing one), so opening someone's shared link
+// can only add to your list, never silently clobber it. Settings
+// (days/categories) are overwritten since that's just a view preference,
+// not data, and easily changed back via the form.
+function parseLeisFromParam(param) {
+  return [...new Set((param || '').split(',').map((s) => s.trim().toUpperCase()).filter((s) => LEI_RE.test(s)))];
+}
+
+function adoptUrlParams() {
+  const params = new URLSearchParams(window.location.search);
+  const urlLeis = parseLeisFromParam(params.get('leis'));
+  const daysParam = parseInt(params.get('days'), 10);
+  const categoriesParam = (params.get('categories') || '').split(',').map((s) => s.trim()).filter(Boolean);
+
+  if (urlLeis.length > 0) {
+    const watchlist = loadWatchlist();
+    const existingLeis = new Set(watchlist.map((c) => c.lei));
+    let added = false;
+    for (const lei of urlLeis) {
+      if (!existingLeis.has(lei)) {
+        watchlist.push({ lei, name: '' });
+        existingLeis.add(lei);
+        added = true;
+      }
+    }
+    if (added) saveWatchlist(watchlist);
+  }
+
+  if (!Number.isNaN(daysParam) || categoriesParam.length > 0) {
+    const settings = loadSettings();
+    saveSettings({
+      days: Number.isNaN(daysParam) ? settings.days : daysParam,
+      categories: categoriesParam.length ? categoriesParam : settings.categories,
+      autoRefreshMinutes: settings.autoRefreshMinutes,
+    });
+  }
+}
+
+function syncUrlWithState(params) {
+  window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
 }
 
 async function loadReports() {
@@ -272,6 +506,7 @@ async function loadReports() {
   listEl.innerHTML = '';
   debugEl.textContent = '';
   lastReports = [];
+  lastNewKeys = new Set();
 
   if (watchlist.length === 0) {
     statusEl.textContent = 'Add a company LEI above to see its reports.';
@@ -289,6 +524,7 @@ async function loadReports() {
       categories: settings.categories.join(','),
     });
     feedLink.href = `/api/feed?${params.toString()}`;
+    syncUrlWithState(params);
 
     const res = await fetch(`/api/reports?${params.toString()}`);
     const data = await res.json();
@@ -303,10 +539,6 @@ async function loadReports() {
     const refreshedAt = new Date().toLocaleTimeString();
     statusEl.textContent = `${data.count} report(s) found in the last ${data.days} day(s) (scanned ${data.scanned} item(s) across ${watchlist.length} compan${watchlist.length === 1 ? 'y' : 'ies'}, matching: ${data.categories.join(', ')}). Refreshed at ${refreshedAt}${cachedCount ? ` (${cachedCount} of ${watchlist.length} from cache)` : ''}.`;
 
-    if (data.count === 0) {
-      listEl.innerHTML = '<li class="empty">No matching reports in the selected time period.</li>';
-    }
-
     const namesByLei = new Map(watchlist.map((c) => [c.lei, c.name]));
     const resolvedReports = data.reports.map((r) => ({
       ...r,
@@ -317,23 +549,9 @@ async function loadReports() {
     const seenBefore = loadSeen();
     const isBaseline = seenBefore.size === 0;
     const newReports = resolvedReports.filter((r) => !seenBefore.has(reportKey(r)));
+    lastNewKeys = isBaseline ? new Set() : new Set(newReports.map(reportKey));
 
-    for (const report of resolvedReports) {
-      const li = document.createElement('li');
-      const isNew = !isBaseline && !seenBefore.has(reportKey(report));
-      li.className = isNew ? 'report report-new' : 'report';
-      const date = report.publishedAt ? new Date(report.publishedAt).toLocaleString() : 'Unknown date';
-      const titleHtml = report.url
-        ? `<a href="${escapeHtml(report.url)}" target="_blank" rel="noopener">${escapeHtml(report.title)}</a>`
-        : escapeHtml(report.title);
-
-      li.innerHTML = `
-        <div class="report-company">${escapeHtml(report.company)}${isNew ? '<span class="new-badge">NEW</span>' : ''}</div>
-        <div class="report-title">${titleHtml}</div>
-        <div class="report-meta">${escapeHtml(report.category || '')} · ${escapeHtml(date)}</div>
-      `;
-      listEl.appendChild(li);
-    }
+    renderReportsList();
 
     const updatedSeen = new Set(seenBefore);
     for (const report of resolvedReports) updatedSeen.add(reportKey(report));
@@ -447,6 +665,23 @@ document.getElementById('add-company-form').addEventListener('submit', (e) => {
 document.getElementById('refresh').addEventListener('click', loadReports);
 document.getElementById('export-csv').addEventListener('click', exportCsv);
 
+document.getElementById('watchlist-export').addEventListener('click', exportWatchlist);
+document.getElementById('watchlist-import-btn').addEventListener('click', () => {
+  document.getElementById('watchlist-import-file').click();
+});
+document.getElementById('watchlist-import-file').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file) importWatchlistFile(file);
+  e.target.value = ''; // allow re-importing the same file again later
+});
+
+document.getElementById('report-filter').addEventListener('input', renderReportsList);
+document.getElementById('hide-reviewed').addEventListener('change', renderReportsList);
+document.getElementById('sort-select').addEventListener('change', () => {
+  saveSort(document.getElementById('sort-select').value);
+  renderReportsList();
+});
+
 document.getElementById('bulk-resolve-btn').addEventListener('click', async () => {
   const statusEl = document.getElementById('bulk-status');
   const inputEl = document.getElementById('bulk-isin-input');
@@ -558,9 +793,16 @@ function initSettingsForm() {
   setupAutoRefresh(settings);
 }
 
+function initReportControls() {
+  document.getElementById('sort-select').value = loadSort();
+}
+
 (async () => {
+  initTheme();
+  adoptUrlParams();
   await initWatchlist();
   initSettingsForm();
+  initReportControls();
   renderWatchlist();
   loadReports();
 })();

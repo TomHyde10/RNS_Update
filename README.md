@@ -68,6 +68,31 @@ hitting the API directly).
   shows the "NEW" badge, so a popup on top of that would be redundant. This
   is plain browser `Notification`, not push: it stops working the moment
   the tab or browser is closed (see "Known limitations").
+- **Filter and sort**: a text box above the report list filters by company
+  or title client-side (no re-fetch), and a sort dropdown reorders by date
+  or company name (persisted in `localStorage`). Both act purely on
+  `lastReports`, the same in-memory list the CSV export reads from.
+- **Mark reviewed**: a per-report "Mark reviewed" toggle, tracked separately
+  from the automatic NEW badge (`REVIEWED_KEY` in `app.js`) — NEW answers
+  "has this appeared since I last looked", reviewed answers "have I actually
+  dealt with this one", and only changes when you click it. Pair it with the
+  "Hide reviewed" checkbox to shrink the list down to what's left to do.
+- **Manual theme toggle**: Auto/Light/Dark in the header, persisted in
+  `localStorage` and applied via a `data-theme` attribute that overrides the
+  `prefers-color-scheme` media query the app otherwise follows.
+- **Export/import your watchlist**: "Export list" downloads your companies
+  as JSON; "Import list" reads one back in, merging new entries and skipping
+  ones you already have (by LEI) or that aren't validly formed — the fix for
+  the fact that the watchlist otherwise lives only in one browser's
+  `localStorage` with no backup.
+- **Shareable URL**: the address bar always reflects your current
+  companies/time-period/categories as query params after a load (via
+  `history.replaceState`, so it doesn't spam browser history) — copy it to
+  bookmark or share a specific view. Opening a link with `leis`/`days`/
+  `categories` params **only ever adds** those companies to your watchlist
+  (or adopts the days/categories as your active settings) — it never removes
+  or replaces anything already saved, so a shared link can't clobber your
+  list even if it names totally different companies.
 
 ### Why LEI, not ISIN or ticker
 
