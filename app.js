@@ -126,9 +126,10 @@ async function loadReports() {
       listEl.appendChild(li);
     }
 
-    if (data.reports[0]) {
-      debugEl.textContent = JSON.stringify(data.reports[0].raw, null, 2);
-    }
+    // Show every item Ticker returned (matched or not) so a missing report
+    // can be diagnosed: absent entirely (not returned by Ticker for this
+    // ISIN/window) vs. present but excluded by the report-type keyword match.
+    debugEl.textContent = JSON.stringify(data.scannedItems || [], null, 2);
   } catch (err) {
     statusEl.textContent = `Failed to load: ${err}`;
   }
