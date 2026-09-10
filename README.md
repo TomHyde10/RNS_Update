@@ -118,16 +118,15 @@ set it wherever you deploy (Render/Vercel dashboard, or your shell for
 local dev), and the button works — no server to run, no localhost/cloud
 networking caveat, unlike a self-hosted setup would need.
 
-- **Model**: defaults to `claude-opus-5`. Override with `ANTHROPIC_MODEL`
-  (e.g. `claude-haiku-4-5`) if you'd rather not spend Opus-tier pricing on
-  a short, low-complexity summarisation task — this app doesn't pick a
-  cheaper model for you by default, that's your call to make.
+- **Model**: defaults to `claude-haiku-4-5` — fast and inexpensive, plenty
+  for a short bullet-point summary. Override with `ANTHROPIC_MODEL` (e.g.
+  `claude-opus-5`) for higher-quality summaries at Opus-tier pricing.
 - **Cost**: each click is a real, billed API call against your Anthropic
   account — there's no free tier or local fallback. A single summary
-  (roughly 2000 input tokens after the 8000-character truncation below,
-  a few hundred output tokens) costs a small fraction of a cent even at
-  Opus-tier rates; summaries are cached client-side per report specifically
-  to avoid paying for the same document twice (see the feature list above).
+  (roughly 2000 input tokens after the 8000-character truncation below, a
+  few hundred output tokens) costs a small fraction of a cent at Haiku
+  rates; summaries are cached client-side per report specifically to avoid
+  paying for the same document twice (see the feature list above).
 - **Refusals**: if Claude declines to summarise a document (safety
   classifier, not a network/config error), the button shows that plainly
   rather than a generic failure.
