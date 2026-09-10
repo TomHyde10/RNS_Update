@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: rns-update
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: TICKER_API_KEY
+        sync: false

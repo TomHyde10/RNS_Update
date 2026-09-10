@@ -26,6 +26,28 @@ environment variable in the project settings (Settings → Environment
 Variables). Any other platform that runs a plain Node server also works via
 `npm start`.
 
+## Deploying (Render)
+
+`server.js` is a plain persistent Node server (not serverless functions), so
+it maps directly onto a Render **Web Service** — Render doesn't need
+`api/reports.js` at all, since `server.js` already serves `/api/reports`
+itself. `render.yaml` in the repo root is a Blueprint for this:
+
+1. In the Render dashboard: **New → Blueprint**, point it at this repo. It
+   will read `render.yaml` and create a Web Service with:
+   - Build command: `npm install`
+   - Start command: `npm start`
+2. After the service is created, set `TICKER_API_KEY` under its
+   **Environment** tab (the blueprint declares the var but marks it
+   `sync: false`, so Render prompts you for the real value rather than
+   storing it in the repo).
+3. Render sets `PORT` itself; `server.js` already reads
+   `process.env.PORT`, so no change is needed there.
+
+Without the blueprint, the same result comes from **New → Web Service** →
+connect the repo → Build Command `npm install`, Start Command `npm start`,
+then add `TICKER_API_KEY` as an environment variable.
+
 ## API integration notes
 
 Field names and the request/response shape are now taken from the official
