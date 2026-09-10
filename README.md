@@ -51,6 +51,28 @@ to your watchlist, reporting per-ISIN failures (not found, GLEIF
 unreachable, etc.) rather than failing the whole batch. You can still add a
 company directly by LEI via the main form if you already know it.
 
+### Email notifications
+
+Each report in the list has a **Send Notification** button that emails a
+summary of that report (company, title, type, publish date, link) on click.
+It's manual/on-demand for now — nothing is sent automatically when a new
+report appears.
+
+Sending goes through standard SMTP via [nodemailer](https://nodemailer.com/)
+(`lib/sendNotification.js`, `/api/notify`) — a genuinely documented,
+well-established mechanism, unlike the NSM integration below. It needs five
+environment variables set (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
+`SMTP_PASS`, `NOTIFY_EMAIL_FROM`, `NOTIFY_EMAIL_TO` — see `.env.example`);
+if any are missing, clicking the button shows an error naming which ones,
+rather than silently failing or guessing a recipient. No email address is
+hardcoded anywhere in the app or committed to the repo — you supply your own
+mailbox/service credentials and recipient address as environment variables
+on whichever platform you deploy to (or in your shell for local dev).
+
+This hasn't been exercised against a real SMTP server from this environment
+(no network access here to verify it end-to-end) — the first real click
+after you configure credentials is effectively the integration test.
+
 ## Deploying (Vercel)
 
 This repo needs no build step — Vercel's zero-config Node setup serves the
@@ -194,8 +216,10 @@ index.html, style.css, app.js   Frontend: LEI watchlist manager (localStorage) +
 api/reports.js                  Vercel serverless function: GET /api/reports
 api/resolve.js                  Vercel serverless function: GET /api/resolve (ISIN -> LEI via GLEIF)
 api/watchlist.js                Vercel serverless function: GET /api/watchlist (seeds a fresh browser)
+api/notify.js                   Vercel serverless function: POST /api/notify (emails a report notification)
 lib/fetchReports.js             NSM search call + filtering logic (shared by api/ and server.js)
 lib/resolveIsin.js              GLEIF ISIN->LEI resolution (shared by api/ and server.js)
-server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist)
+lib/sendNotification.js         SMTP email sending via nodemailer (shared by api/ and server.js)
+server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist + /api/notify)
 config/watchlist.js             Default company list - seeds a fresh browser, and fallback for /api/reports called with no `leis` param
 ```

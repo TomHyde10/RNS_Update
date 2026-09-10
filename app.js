@@ -188,7 +188,33 @@ async function loadReports() {
         <div class="report-company">${escapeHtml(company)}</div>
         <div class="report-title">${titleHtml}</div>
         <div class="report-meta">${escapeHtml(report.category || '')} · ${escapeHtml(date)}</div>
+        <div class="report-actions">
+          <button type="button" class="send-notification">Send Notification</button>
+          <span class="notify-status"></span>
+        </div>
       `;
+
+      li.querySelector('.send-notification').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        const statusSpan = li.querySelector('.notify-status');
+        btn.disabled = true;
+        statusSpan.textContent = 'Sending…';
+
+        try {
+          const res = await fetch('/api/notify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...report, company }),
+          });
+          const result = await res.json();
+          statusSpan.textContent = result.ok ? 'Notification sent' : `Failed: ${result.error || res.status}`;
+        } catch (err) {
+          statusSpan.textContent = `Failed: ${err}`;
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
       listEl.appendChild(li);
     }
 
