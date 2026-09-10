@@ -345,9 +345,12 @@ async function openHistoryOverlay(lei, displayName) {
     for (const item of items) {
       const li = document.createElement('li');
       const date = item.publishedAt ? new Date(item.publishedAt).toLocaleDateString() : 'Unknown date';
+      const typeHtml = item.url
+        ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.type || 'Unknown type')}</a>`
+        : escapeHtml(item.type || 'Unknown type');
       li.innerHTML = `
         <span class="history-date">${escapeHtml(date)}</span> ·
-        <span class="history-type">${escapeHtml(item.type || 'Unknown type')}</span><br>
+        <span class="history-type">${typeHtml}</span><br>
         <span class="history-headline">${escapeHtml(item.headline || '')}</span>
       `;
       listEl.appendChild(li);
