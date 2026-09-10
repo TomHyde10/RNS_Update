@@ -26,38 +26,46 @@ environment variable in the project settings (Settings → Environment
 Variables). Any other platform that runs a plain Node server also works via
 `npm start`.
 
-## Known limitations / things to verify
+## API integration notes
 
-This was built without network access to `developers.ticker.app` or
-`api.tickerapp.net` (blocked by the build environment's egress policy), so
-only one endpoint and its auth header were confirmed:
+Field names and the request/response shape are now taken from the official
+Ticker API reference (https://developers.ticker.app/api-reference), not
+guessed:
 
 ```
-GET https://api.tickerapp.net/v2/disclosures/sources/rns/items?pageSize=<n>
-X-Api-Key: <your key>
+GET https://api.tickerapp.net/v2/disclosures/sources/rns/items?isins=<isin1,isin2>&pageSize=<n>
+x-api-key: <your key>
 ```
 
-Everything downstream of that — the exact field names for an item's ISIN,
-title, category, date, and document URL — is guessed defensively in
-`lib/fetchReports.js` (it tries several likely field names per value). Once
-you run this with real network access:
+- The watchlist's ISINs are passed server-side via the `isins` query
+  parameter, so Ticker does the filtering — the app no longer pulls a large
+  page and filters client-side.
+- Item fields are read from the confirmed response shape: `headline`,
+  `timestamp`, `issuer.name`, `issuer.instrument.isin`,
+  `issuer.instrument.symbol.mnemonic`, and `category[].name`.
+- A `429` is reported distinctly (it can be either the per-second throttle
+  or the weekly quota); one retry with backoff is attempted if the response
+  carries a `Retry-After` header, otherwise the error is surfaced
+  immediately rather than spinning against a quota that won't clear until
+  the weekly reset.
 
-- Open the "Raw JSON" panel at the bottom of the page (or call
-  `/api/reports` directly) to see the actual fields Ticker returns for an
-  item, and adjust `isinOf()` / `normalise()` in `lib/fetchReports.js` if
-  the guesses were wrong.
-- `FINANCIAL_REPORT_KEYWORDS` in the same file is a keyword heuristic for
-  picking "financial report"-type disclosures out of the general RNS feed
-  (which also carries trading updates, director dealings, AGM notices,
-  etc.) — check it matches Ticker's actual category values and tighten it
-  if needed.
-- The fetch only pulls one page (`pageSize`, default 200, max 500) with no
-  pagination — fine for a small watchlist's recent activity, but it won't
-  surface older reports if `pageSize` isn't large enough. Check the docs for
-  a pagination/cursor parameter if you need deeper history.
-- If Ticker's API supports filtering by ISIN or category as query
-  parameters, it would be more efficient to pass those directly instead of
-  filtering client-side — worth checking the docs for.
+### Still unconfirmed / worth checking once you have a real key
+
+- **`publication` entry shape.** The reference response shows
+  `"publication": [...]` without specifying the fields on each entry.
+  `documentUrlOf()` in `lib/fetchReports.js` defensively tries
+  `url`/`link`/`href`/`documentUrl`. Check the "Raw JSON" debug panel on the
+  page and fix this lookup if the guess is wrong.
+- **"Financial report" filtering** still matches on headline/category-name
+  keywords (`FINANCIAL_REPORT_KEYWORDS` in `lib/fetchReports.js`) rather than
+  the `fcaCategory`/`tickerCategory` codes, since the code-to-meaning mapping
+  (e.g. which of `AA, BC, CS, CU, DD, DI, HO, ME, RE, TU, XX` means
+  "results") isn't in the reference excerpt available. If you confirm the
+  mapping, filtering via `fcaCategories`/`tickerCategories` server-side would
+  be more efficient than the keyword heuristic.
+- Only a single page is fetched (no `pageCursor` pagination) — fine for a
+  small watchlist's recent activity, but deep history for an active issuer
+  could span more than one page.
 
 ## Project layout
 
