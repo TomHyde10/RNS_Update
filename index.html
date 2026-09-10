@@ -46,11 +46,31 @@
               <option value="90">Last 90 days</option>
             </select>
           </label>
+
+          <fieldset id="categories-fieldset">
+            <legend>Report types</legend>
+            <label class="checkbox-row"><input type="checkbox" id="cat-halfyear" value="Half-year Financial Report" /> Half-year Financial Report</label>
+            <label class="checkbox-row"><input type="checkbox" id="cat-annual" value="Annual Financial Report" /> Annual Financial Report</label>
+            <label class="checkbox-row"><input type="checkbox" id="cat-nav" value="Net Asset Value(s)" /> Net Asset Value(s)</label>
+            <label class="checkbox-row"><input type="checkbox" id="cat-dividend" value="Dividend Declaration" /> Dividend Declaration</label>
+          </fieldset>
           <label>
-            Report types
-            <input id="categories-input" type="text" autocomplete="off" />
+            Other report types
+            <input id="categories-other-input" type="text" autocomplete="off" placeholder="Comma-separated, exact category name" />
           </label>
-          <p class="hint">Comma-separated, matched exactly against the filing category.</p>
+          <p class="hint">Matched exactly against the filing category (case-insensitive).</p>
+
+          <label>
+            Auto-refresh
+            <select id="auto-refresh-select">
+              <option value="0">Off</option>
+              <option value="5">Every 5 minutes</option>
+              <option value="15">Every 15 minutes</option>
+              <option value="30">Every 30 minutes</option>
+            </select>
+          </label>
+          <p class="hint">When on and this tab is in the background, a browser notification pops up for newly-seen reports (needs notification permission).</p>
+
           <div class="settings-buttons">
             <button type="submit">Apply</button>
             <button type="button" id="categories-reset">Reset</button>
@@ -62,7 +82,11 @@
     <main class="main-content">
       <div id="reports-header">
         <p id="status">Loading…</p>
-        <button id="refresh">Refresh</button>
+        <div class="reports-header-actions">
+          <a id="feed-link" href="#" target="_blank" rel="noopener" title="Subscribe in a feed reader">RSS feed</a>
+          <button type="button" id="export-csv">Download CSV</button>
+          <button id="refresh">Refresh</button>
+        </div>
       </div>
       <ul id="reports"></ul>
 
@@ -71,6 +95,17 @@
         <pre id="debug"></pre>
       </details>
     </main>
+  </div>
+
+  <div id="history-overlay" class="overlay" hidden>
+    <div class="overlay-card overlay-card-wide" role="dialog" aria-modal="true" aria-labelledby="history-title">
+      <div class="overlay-header">
+        <h2 id="history-title">Filing history</h2>
+        <button type="button" id="history-close" class="overlay-close" aria-label="Close">&times;</button>
+      </div>
+      <p id="history-status" class="hint"></p>
+      <ul id="history-list" class="history-list"></ul>
+    </div>
   </div>
 
   <script src="app.js"></script>

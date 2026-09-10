@@ -25,17 +25,49 @@ NSM search so the browser doesn't need to talk to it directly.
    this and persist normally. The list otherwise lives in that browser's
    `localStorage`.
 3. Under "Search settings", choose a **time period** (24 hours to 90 days)
-   and the **report types** to match — a comma-separated list matched
-   exactly against the filing's category (defaults to "Half-year Financial
-   Report, Annual Financial Report"; try adding e.g. `Net Asset Value(s)` or
-   `Dividend Declaration` to widen it, or clear the field and hit Apply to
-   fall back to the default). These are also saved to `localStorage` and
+   and the **report types** to match — checkboxes for the four confirmed
+   category names, plus an "Other report types" field for anything not
+   listed (comma-separated, matched exactly against the filing's category;
+   defaults to "Half-year Financial Report, Annual Financial Report" if you
+   clear everything and hit Apply). These are saved to `localStorage` and
    sent to `/api/reports` as `days` and `categories` query params.
 
 `config/watchlist.js` serves two roles: it's what `/api/watchlist` seeds a
 brand-new browser with (see above), and it's also the fallback `/api/reports`
 itself falls back to when called with no `leis` query parameter (e.g.
 hitting the API directly).
+
+### Features beyond the basic list
+
+- **New-report highlighting**: reports that appeared since your last visit
+  get a "NEW" badge and a left-border highlight. Tracked via a set of seen
+  report IDs in `localStorage` (`SEEN_KEY` in `app.js`) — the very first
+  load establishes a baseline silently (nothing is flagged "new" the first
+  time you ever see it), and every load after that only flags genuinely new
+  items.
+- **Cache visibility**: the status line shows a "refreshed at HH:MM:SS" time
+  and, when applicable, how many of your watched companies were served from
+  the in-memory NSM cache (see below) rather than freshly fetched.
+- **Download CSV**: exports the currently-displayed report list (company,
+  title, category, date, link) as a CSV file — a quick audit trail outside
+  the browser.
+- **RSS feed**: the "RSS feed" link points at `/api/feed` with your current
+  watchlist/time-period/category settings baked in as query params — paste
+  that URL into any feed reader to get "new report" notifications without
+  this app needing to run its own email/push pipeline. See `lib/buildFeed.js`.
+- **Per-company filing history**: the clock icon next to each company in the
+  sidebar opens a modal showing that company's full filing history for the
+  last 365 days (every item NSM returns, not just ones matching your current
+  category filter) — useful for "did I actually miss anything" checks
+  without fiddling with the time-period dropdown.
+- **Auto-refresh + browser notifications**: the "Auto-refresh" setting
+  polls `/api/reports` on an interval (5/15/30 minutes) via `setInterval`
+  while the tab stays open. Turning it on requests browser notification
+  permission; if granted, a newly-seen report triggers an OS notification
+  **only while the tab is in the background** — a foreground tab already
+  shows the "NEW" badge, so a popup on top of that would be redundant. This
+  is plain browser `Notification`, not push: it stops working the moment
+  the tab or browser is closed (see "Known limitations").
 
 ### Why LEI, not ISIN or ticker
 
@@ -186,6 +218,19 @@ Content-Type: application/json
   `isin` field instead of `lei`) is silently dropped on load rather than
   migrated, since there's no way to derive an LEI from an old ISIN entry
   automatically — see `loadWatchlist()` in `app.js`.
+- **Auto-refresh and its notifications only run while the tab is open** —
+  there's no service worker/push subscription behind this, so closing the
+  tab or browser stops both the polling and any further notifications. This
+  is a deliberate simplicity tradeoff; the RSS feed above is the option that
+  keeps working when the tab isn't open.
+- The "seen reports" set behind the NEW badge is capped at the most recent
+  1000 entries (`MAX_SEEN` in `app.js`) and lives in that browser's
+  `localStorage` — clearing site data resets it, which just means the next
+  load re-establishes a fresh baseline (nothing incorrectly flagged, just a
+  one-time loss of "what's new" history).
+- The per-company history modal always requests 365 days for that one LEI,
+  which is `MAX_WINDOW_DAYS` in `lib/fetchReports.js` — it shows everything
+  NSM will return for that window, not literally all-time history.
 
 ## Project layout
 
@@ -194,8 +239,10 @@ index.html, style.css, app.js   Frontend: LEI watchlist manager (localStorage) +
 api/reports.js                  Vercel serverless function: GET /api/reports
 api/resolve.js                  Vercel serverless function: GET /api/resolve (ISIN -> LEI via GLEIF)
 api/watchlist.js                Vercel serverless function: GET /api/watchlist (seeds a fresh browser)
+api/feed.js                     Vercel serverless function: GET /api/feed (RSS feed of matching reports)
 lib/fetchReports.js             NSM search call + filtering logic (shared by api/ and server.js)
 lib/resolveIsin.js              GLEIF ISIN->LEI resolution (shared by api/ and server.js)
-server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist)
+lib/buildFeed.js                Builds the RSS 2.0 XML for /api/feed (shared by api/ and server.js)
+server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist + /api/feed)
 config/watchlist.js             Default company list - seeds a fresh browser, and fallback for /api/reports called with no `leis` param
 ```

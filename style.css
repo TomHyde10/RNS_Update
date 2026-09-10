@@ -130,15 +130,18 @@ button:hover { border-color: var(--accent); }
 
 .company-tag .lei { color: var(--muted); font-size: 0.75rem; }
 
-.remove-company {
+.remove-company,
+.history-company {
   border: none;
   border-radius: 50%;
   width: 1.3rem;
   height: 1.3rem;
   line-height: 1;
   padding: 0;
-  font-size: 1rem;
+  font-size: 0.85rem;
 }
+
+.history-company { background: transparent; }
 
 #bulk-add { margin-top: 0.75rem; }
 #bulk-add summary { cursor: pointer; color: var(--accent); font-size: 0.85rem; }
@@ -189,6 +192,31 @@ button:hover { border-color: var(--accent); }
 
 #settings-form .hint { margin: -0.3rem 0 0; }
 
+#categories-fieldset {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem 0.75rem;
+  margin: 0;
+}
+
+#categories-fieldset legend {
+  font-size: 0.85rem;
+  color: var(--muted);
+  padding: 0 0.3rem;
+}
+
+.checkbox-row {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--fg) !important;
+  padding: 0.15rem 0;
+}
+
+.checkbox-row input { width: auto; }
+
 .settings-buttons {
   display: flex;
   gap: 0.5rem;
@@ -200,6 +228,19 @@ button:hover { border-color: var(--accent); }
   justify-content: space-between;
   gap: 1rem;
   margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.reports-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.reports-header-actions a {
+  font-size: 0.85rem;
+  color: var(--accent);
 }
 
 #status { color: var(--muted); margin: 0; }
@@ -220,6 +261,23 @@ button:hover { border-color: var(--accent); }
   background: var(--panel-bg);
 }
 
+.report-new {
+  border-left: 3px solid var(--accent);
+}
+
+.new-badge {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+
 .report-company {
   font-size: 0.8rem;
   text-transform: uppercase;
@@ -234,6 +292,81 @@ button:hover { border-color: var(--accent); }
 .report-meta { font-size: 0.85rem; color: var(--muted); }
 
 .empty { color: var(--muted); list-style: none; }
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 100;
+}
+
+/* `.overlay`'s own `display: flex` has equal specificity to the UA
+   stylesheet's `[hidden] { display: none }` and, as author CSS, always wins
+   the cascade regardless of source order - so the hidden attribute alone
+   wouldn't actually hide it without this override. */
+.overlay[hidden] { display: none; }
+
+.overlay-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.5rem;
+  max-width: 400px;
+  width: 100%;
+}
+
+.overlay-card-wide {
+  max-width: 560px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.overlay-card h2 { margin: 0 0 0.5rem; font-size: 1.05rem; }
+.overlay-header h2 { margin: 0; }
+
+.overlay-close {
+  border: none;
+  border-radius: 50%;
+  width: 1.6rem;
+  height: 1.6rem;
+  line-height: 1;
+  padding: 0;
+  font-size: 1.1rem;
+  flex: 0 0 auto;
+}
+
+.history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.history-list li {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.85rem;
+}
+
+.history-date { color: var(--muted); font-size: 0.8rem; }
+.history-type { font-weight: 600; }
+.history-headline { color: var(--muted); }
 
 .main-content > details { margin-top: 1.25rem; }
 #debug {

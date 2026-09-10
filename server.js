@@ -6,6 +6,7 @@ const path = require('path');
 const { URL } = require('url');
 const { fetchReports } = require('./lib/fetchReports');
 const { resolveIsins } = require('./lib/resolveIsin');
+const { buildRssFeed } = require('./lib/buildFeed');
 const watchlist = require('./config/watchlist');
 
 const PORT = process.env.PORT || 3000;
@@ -46,6 +47,33 @@ const server = http.createServer(async (req, res) => {
     const results = await resolveIsins(isins);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ results }));
+    return;
+  }
+
+  if (parsed.pathname === '/api/feed') {
+    const { status, body } = await fetchReports({
+      leis: parsed.searchParams.get('leis'),
+      days: parsed.searchParams.get('days'),
+      categories: parsed.searchParams.get('categories'),
+    });
+
+    if (status !== 200) {
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(body));
+      return;
+    }
+
+    const siteUrl = `http://${req.headers.host}/`;
+    const feedUrl = `http://${req.headers.host}${req.url}`;
+    const xml = buildRssFeed({
+      reports: body.reports,
+      feedUrl,
+      siteUrl,
+      title: 'RNS Update',
+      description: `Report disclosures for ${body.leis.length} compan${body.leis.length === 1 ? 'y' : 'ies'}, matching: ${body.categories.join(', ')}`,
+    });
+    res.writeHead(200, { 'Content-Type': 'application/rss+xml; charset=utf-8' });
+    res.end(xml);
     return;
   }
 
