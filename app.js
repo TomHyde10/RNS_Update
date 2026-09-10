@@ -3,6 +3,7 @@ const SETTINGS_KEY = 'rns-settings';
 const SEEN_KEY = 'rns-seen-reports';
 const REVIEWED_KEY = 'rns-reviewed-reports';
 const HISTORY_CACHE_KEY = 'rns-history-cache';
+const SUMMARY_CACHE_KEY = 'rns-summary-cache';
 const SORT_KEY = 'rns-sort';
 const THEME_KEY = 'rns-theme';
 const LEI_RE = /^[A-Z0-9]{20}$/;
@@ -10,6 +11,10 @@ const DEFAULT_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Repo
 const KNOWN_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report', 'Net Asset Value(s)', 'Dividend Declaration'];
 const MAX_SEEN = 1000;
 const MAX_REVIEWED = 1000;
+// Unlike the history cache, this has no TTL - a filing's document doesn't
+// change once published, so a cached summary of it never goes stale. Only
+// capped by count so it can't grow unbounded over long-term use.
+const MAX_SUMMARY_CACHE = 200;
 const SORT_OPTIONS = ['date-desc', 'date-asc', 'company-asc', 'company-desc'];
 const THEME_OPTIONS = ['auto', 'light', 'dark'];
 // Same TTL philosophy as the server's NSM cache (NSM_CACHE_TTL_MINUTES) but
@@ -225,6 +230,24 @@ function saveHistoryCache(cache) {
   localStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify(pruned));
 }
 
+// Per-report LLM summary cache, keyed by reportKey(). No TTL (see
+// MAX_SUMMARY_CACHE above) - just capped by count, oldest dropped first.
+function loadSummaryCache() {
+  try {
+    const raw = localStorage.getItem(SUMMARY_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSummaryCache(cache) {
+  const entries = Object.entries(cache);
+  const pruned = entries.length > MAX_SUMMARY_CACHE ? entries.slice(-MAX_SUMMARY_CACHE) : entries;
+  localStorage.setItem(SUMMARY_CACHE_KEY, JSON.stringify(Object.fromEntries(pruned)));
+}
+
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({
     '&': '&amp;',
@@ -417,8 +440,11 @@ function renderReportsList() {
     return;
   }
 
+  const byKey = new Map();
+
   for (const report of visible) {
     const key = reportKey(report);
+    byKey.set(key, report);
     const isNew = lastNewKeys.has(key);
     const isReviewed = reviewed.has(key);
     const li = document.createElement('li');
@@ -434,7 +460,9 @@ function renderReportsList() {
       <div class="report-meta">${escapeHtml(report.category || '')} · ${escapeHtml(date)}</div>
       <div class="report-actions">
         <button type="button" class="review-toggle" data-key="${escapeHtml(key)}">${isReviewed ? '✓ Reviewed' : 'Mark reviewed'}</button>
+        <button type="button" class="summarise-btn" data-key="${escapeHtml(key)}">Summarise</button>
       </div>
+      <div class="report-summary" data-key="${escapeHtml(key)}" hidden></div>
     `;
     listEl.appendChild(li);
   }
@@ -448,6 +476,69 @@ function renderReportsList() {
       renderReportsList();
     });
   });
+
+  listEl.querySelectorAll('.summarise-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const report = byKey.get(btn.dataset.key);
+      const container = listEl.querySelector(`.report-summary[data-key="${CSS.escape(btn.dataset.key)}"]`);
+      handleSummariseClick(report, btn, container);
+    });
+  });
+}
+
+function renderSummary(container, result) {
+  container.hidden = false;
+  if (result.error) {
+    container.innerHTML = `<p class="error">${escapeHtml(result.error)}</p>`;
+    return;
+  }
+  const notes = [];
+  if (result.fromCache) notes.push('from cache');
+  if (result.truncated) notes.push('document truncated before summarising');
+  const noteHtml = notes.length ? `<p class="hint">(${notes.join(', ')})</p>` : '';
+  container.innerHTML = `<div class="summary-text">${escapeHtml(result.summary).replace(/\n/g, '<br>')}</div>${noteHtml}`;
+}
+
+async function handleSummariseClick(report, btn, container) {
+  const key = reportKey(report);
+  const cache = loadSummaryCache();
+
+  if (cache[key]) {
+    renderSummary(container, { summary: cache[key].summary, truncated: cache[key].truncated, fromCache: true });
+    return;
+  }
+
+  if (!report.url) {
+    renderSummary(container, { error: 'This report has no linked document to summarise.' });
+    return;
+  }
+
+  btn.disabled = true;
+  container.hidden = false;
+  container.innerHTML = '<p class="hint">Summarising… this can take a while on a self-hosted model.</p>';
+
+  try {
+    const res = await fetch('/api/summarise', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: report.url, company: report.company, title: report.title, category: report.category }),
+    });
+    const data = await res.json();
+
+    if (!data.ok) {
+      renderSummary(container, { error: data.error || `HTTP ${res.status}` });
+      return;
+    }
+
+    const updated = loadSummaryCache();
+    updated[key] = { summary: data.summary, truncated: data.truncated };
+    saveSummaryCache(updated);
+    renderSummary(container, { summary: data.summary, truncated: data.truncated, fromCache: false });
+  } catch (err) {
+    renderSummary(container, { error: `Failed to summarise: ${err}` });
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // Merges companies/settings carried in the URL's query string (see

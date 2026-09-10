@@ -7,6 +7,7 @@ const { URL } = require('url');
 const { fetchReports } = require('./lib/fetchReports');
 const { resolveIsins } = require('./lib/resolveIsin');
 const { buildRssFeed } = require('./lib/buildFeed');
+const { summariseReport } = require('./lib/summarise');
 const watchlist = require('./config/watchlist');
 
 const PORT = process.env.PORT || 3000;
@@ -74,6 +75,25 @@ const server = http.createServer(async (req, res) => {
     });
     res.writeHead(200, { 'Content-Type': 'application/rss+xml; charset=utf-8' });
     res.end(xml);
+    return;
+  }
+
+  if (parsed.pathname === '/api/summarise' && req.method === 'POST') {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', async () => {
+      let body;
+      try {
+        body = JSON.parse(raw || '{}');
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+        return;
+      }
+      const result = await summariseReport(body);
+      res.writeHead(result.ok ? 200 : 502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    });
     return;
   }
 

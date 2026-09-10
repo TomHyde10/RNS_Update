@@ -93,6 +93,84 @@ hitting the API directly).
   (or adopts the days/categories as your active settings) — it never removes
   or replaces anything already saved, so a shared link can't clobber your
   list even if it names totally different companies.
+- **Summarise**: a per-report "Summarise" button fetches that report's
+  linked document, extracts its text, and sends it to a **self-hosted,
+  open-weight LLM** for a short bullet-point summary — not a hosted
+  third-party API, no OpenAI/Anthropic/etc. key involved anywhere. See
+  "Summarise (self-hosted LLM)" below for what this needs and how to set it
+  up; the button is present either way, but shows a clear "not configured"
+  error until `LLM_BASE_URL`/`LLM_MODEL` are set. Summaries are cached
+  client-side per report (indefinitely — a published filing's document
+  doesn't change, so a cached summary of it never goes stale) so re-clicking
+  an already-summarised report costs no new fetch or inference call.
+
+### Summarise (self-hosted LLM)
+
+The "Summarise" button on each report is deliberately built around a
+**self-hosted, open-weight model** rather than a hosted commercial API —
+there's no `OPENAI_API_KEY`-style secret anywhere in this app, and it never
+will be for this feature. Instead, `lib/summarise.js` calls an
+OpenAI-compatible `POST {LLM_BASE_URL}/chat/completions` endpoint that
+**you** run and point the app at via two required env vars, `LLM_BASE_URL`
+and `LLM_MODEL` (see `.env.example`). That's the same request shape
+[Ollama](https://ollama.com) (via its `/v1` compatibility layer),
+[llama.cpp](https://github.com/ggml-org/llama.cpp)'s built-in server,
+[vLLM](https://github.com/vllm-project/vllm),
+[LocalAI](https://localai.io), and text-generation-webui's OpenAI extension
+all speak, so any of those work without code changes — this isn't
+Ollama-specific, just written against the de facto standard shape most
+self-hosted inference servers expose.
+
+**Quickest path (Ollama, local dev):**
+```
+ollama pull llama3.1        # or any other model you've got the hardware for
+ollama serve                # starts the API on localhost:11434
+```
+then set:
+```
+LLM_BASE_URL=http://localhost:11434/v1
+LLM_MODEL=llama3.1
+```
+and run `npm start` as normal. This works out of the box for local
+development because the app and the model server are on the same machine.
+
+**If you deploy this app (Render/Vercel) rather than running it locally,
+`localhost` in `LLM_BASE_URL` refers to the cloud container, not your own
+machine** — it will not reach an Ollama instance running on your laptop.
+For a deployed app to use this feature, your self-hosted LLM server needs
+to be reachable from wherever `RNS_Update` runs: either both live on the
+same machine/VPS you control, or your inference server is exposed at a
+stable URL (its own VPS, a tunnel like Tailscale/Cloudflare Tunnel, etc.).
+Exposing an inference server to the internet has its own security
+implications (auth, who else can hit it and rack up your GPU time) that
+this app doesn't handle for you — `LLM_API_KEY` is available if your setup
+puts a bearer token in front of it, but the network exposure itself is on
+you to secure.
+
+Document handling (`lib/extractDocumentText.js`):
+- Most filings are PDFs, parsed with [`pdf-parse`](https://www.npmjs.com/package/pdf-parse)
+  (pinned to `1.1.1`, its last release with the simple `pdf(buffer) ->
+  {text}` API, rather than the `2.x` rewrite which pulls in `pdfjs-dist` and
+  a heavier class-based API this app doesn't need).
+- The occasional HTML "Direct Upload" filing (see "Known limitations" below)
+  is handled with basic tag-stripping instead — good enough for a
+  summarisation prompt, not a general-purpose HTML-to-text tool.
+- Extracted text is truncated to `LLM_MAX_INPUT_CHARS` (default 8000)
+  before being sent to the model, both to keep a resource-constrained local
+  model's prompt small and because inference on modest self-hosted hardware
+  (no GPU, a laptop CPU) can be genuinely slow with a long prompt. The
+  summary itself notes when this happened.
+
+This is the least testable feature in the app from this environment: there
+is no network access here to any FCA artefact host *or* to any LLM server,
+so nothing about the real end-to-end path (fetching a live filing, an
+actual model's summary quality) has been exercised against the real
+services. What was verified instead: `pdf-parse` correctly extracts text
+from a real PDF fixture, the HTML tag-stripping path, and the full
+request/response shape against a mocked OpenAI-compatible endpoint (correct
+URL, headers, prompt construction, and response parsing) — see the git
+history for the actual test scripts run. The first real click after
+pointing this at a running model is the genuine integration test.
 
 ### Why LEI, not ISIN or ticker
 
@@ -265,9 +343,12 @@ api/reports.js                  Vercel serverless function: GET /api/reports
 api/resolve.js                  Vercel serverless function: GET /api/resolve (ISIN -> LEI via GLEIF)
 api/watchlist.js                Vercel serverless function: GET /api/watchlist (seeds a fresh browser)
 api/feed.js                     Vercel serverless function: GET /api/feed (RSS feed of matching reports)
+api/summarise.js                Vercel serverless function: POST /api/summarise (fetch + LLM-summarise a report's document)
 lib/fetchReports.js             NSM search call + filtering logic (shared by api/ and server.js)
 lib/resolveIsin.js              GLEIF ISIN->LEI resolution (shared by api/ and server.js)
 lib/buildFeed.js                Builds the RSS 2.0 XML for /api/feed (shared by api/ and server.js)
-server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist + /api/feed)
+lib/extractDocumentText.js      Fetches a report's PDF/HTML document and extracts plain text (shared by api/ and server.js)
+lib/summarise.js                Calls a self-hosted OpenAI-compatible LLM endpoint to summarise extracted text (shared by api/ and server.js)
+server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist + /api/feed + /api/summarise)
 config/watchlist.js             Default company list - seeds a fresh browser, and fallback for /api/reports called with no `leis` param
 ```

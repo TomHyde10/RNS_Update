@@ -381,13 +381,26 @@ button:hover { border-color: var(--accent); }
 
 .report-meta { font-size: 0.85rem; color: var(--muted); }
 
-.report-actions { margin-top: 0.5rem; }
+.report-actions { margin-top: 0.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
 
-.review-toggle { font-size: 0.75rem; padding: 0.25rem 0.6rem; }
+.review-toggle,
+.summarise-btn { font-size: 0.75rem; padding: 0.25rem 0.6rem; }
 
 .report-reviewed {
   opacity: 0.55;
 }
+
+.report-summary {
+  margin-top: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 6px;
+  background: rgba(127, 127, 127, 0.1);
+  font-size: 0.85rem;
+}
+
+.summary-text { white-space: pre-wrap; }
+.report-summary .hint { margin: 0.4rem 0 0; }
+.report-summary .error { color: #d64545; font-size: 0.85rem; margin: 0; }
 
 .empty { color: var(--muted); list-style: none; }
 
