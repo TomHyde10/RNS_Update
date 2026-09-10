@@ -83,40 +83,55 @@ regardless of the overlay — there is currently no way to configure those
 through the UI, since they're secrets that shouldn't live in browser storage
 or be resent with every request.
 
+**The sending account and the recipient don't need to be related.** If your
+recipient is an organisation mailbox that can't itself be used to send (e.g.
+your Microsoft 365 admin hasn't enabled SMTP AUTH for it — see below), send
+*through* a different account entirely and just set the recipient (via the
+overlay, or `NOTIFY_EMAIL_TO`) to your org address. The email still lands in
+your org inbox; only the outbound relay is a separate account.
+
 This hasn't been exercised against a real SMTP server from this environment
 (no network access here to verify it end-to-end) — the first real click
 after you configure credentials is effectively the integration test.
 
-#### Sending via a Microsoft 365 / Outlook (organisation) mailbox
+#### Sending via SendGrid (recommended when your own mailbox can't send)
 
-`render.yaml` already pre-fills `SMTP_HOST=smtp.office365.com` and
-`SMTP_PORT=587` for this case — on Render you only need to set `SMTP_USER`,
-`SMTP_PASS`, and `NOTIFY_EMAIL_FROM` (Render dashboard → your service →
-Environment) after the Blueprint deploys, since those three are marked
-`sync: false` and deliberately not stored in the repo. `SMTP_USER` and
-`NOTIFY_EMAIL_FROM` are normally the same mailbox address; `SMTP_PASS` is
-that mailbox's password (or an app password — see below).
+`render.yaml` pre-fills `SMTP_HOST=smtp.sendgrid.net`, `SMTP_PORT=587`, and
+`SMTP_USER=apikey` (that's a literal fixed value SendGrid requires as the
+username, not a placeholder — the real secret is the API key, which goes in
+`SMTP_PASS`). Setup, one-time:
 
-**Before spending time on this, know the most common blocker:** Microsoft
-disabled basic SMTP AUTH tenant-wide by default from late 2022 onward. If
-your organisation's admin hasn't explicitly re-enabled "Authenticated SMTP"
-for your mailbox, every send will fail with `535 5.7.139 Authentication
-unsuccessful` regardless of what's in these env vars — no client-side fix
-exists for this, it's a tenant/mailbox setting only an Exchange admin can
-change (`Set-CASMailbox -Identity <you> -SmtpClientAuthenticationDisabled
-$false`, and confirming SMTP AUTH isn't blocked at the tenant level in the
-Exchange admin center). Ask your IT/Exchange admin to check this first if
-sending fails.
+1. Sign up at [sendgrid.com](https://sendgrid.com) — the free tier covers
+   100 emails/day, which is comfortably enough for a personal watchlist app.
+2. **Verify a sender identity**: Settings → Sender Authentication → Single
+   Sender Verification, and verify the address you want emails to appear
+   *from* (click the confirmation link SendGrid emails to it). SendGrid
+   refuses to send for an unverified `from` address, so this step is
+   mandatory, not optional — you can't skip straight to creating an API key.
+3. **Create an API key**: Settings → API Keys → Create API Key. Restricted
+   Access with just "Mail Send" permission is enough; you don't need Full
+   Access.
+4. On Render (dashboard → your service → Environment, after the Blueprint
+   deploys), set the two secrets it prompts for: `SMTP_PASS` = the API key
+   from step 3, `NOTIFY_EMAIL_FROM` = the verified address from step 2.
+5. In the app itself, set the recipient (Send Notification overlay, or the
+   "Notification email" sidebar panel) to your organisation email address —
+   that's independent of the SendGrid account and can be anything.
 
-If your account also has MFA enforced, a normal password won't authenticate
-either — you'd need an **app password** instead, which itself requires
-per-user MFA (not just Security Defaults/Conditional Access MFA) to be
-enabled and app passwords allowed by the tenant. In many organisations, IT
-policy blocks both SMTP AUTH and app passwords entirely, in which case a
-personal mailbox (e.g. Gmail with an app password) or a transactional email
-service (SendGrid, Mailgun — both have free tiers) is the practical
-alternative; only the `SMTP_HOST`/`SMTP_PORT` values in `render.yaml` would
-need to change.
+#### Sending via a Microsoft 365 / Outlook (organisation) mailbox instead
+
+If you'd rather send *from* the org mailbox directly (not just receive into
+it), swap `render.yaml`'s `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER` to
+`smtp.office365.com` / `587` / your mailbox address, and know the most
+common blocker first: Microsoft disabled basic SMTP AUTH tenant-wide by
+default from late 2022 onward. If your organisation's admin hasn't
+explicitly re-enabled "Authenticated SMTP" for your mailbox, every send
+will fail with `535 5.7.139 Authentication unsuccessful` regardless of what
+credentials you use — no client-side fix exists, it's a tenant/mailbox
+setting only an Exchange admin can change. If your account also has MFA
+enforced, a normal password won't authenticate either; you'd need an app
+password, which itself requires per-user MFA and admin permission. This is
+exactly the scenario SendGrid above sidesteps entirely.
 
 ## Deploying (Vercel)
 
