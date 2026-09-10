@@ -1,5 +1,5 @@
 const STORAGE_KEY = 'rns-watchlist';
-const ISIN_RE = /^[A-Z0-9]{12}$/;
+const LEI_RE = /^[A-Z0-9]{20}$/;
 
 function loadWatchlist() {
   try {
@@ -34,15 +34,15 @@ function renderWatchlist() {
     const li = document.createElement('li');
     li.className = 'company-tag';
     li.innerHTML = `
-      <span>${escapeHtml(company.name || company.isin)}${company.name ? ` <span class="isin">(${escapeHtml(company.isin)})</span>` : ''}</span>
-      <button type="button" class="remove-company" data-isin="${escapeHtml(company.isin)}" aria-label="Remove">&times;</button>
+      <span>${escapeHtml(company.name || company.lei)}${company.name ? ` <span class="lei">(${escapeHtml(company.lei)})</span>` : ''}</span>
+      <button type="button" class="remove-company" data-lei="${escapeHtml(company.lei)}" aria-label="Remove">&times;</button>
     `;
     listEl.appendChild(li);
   }
 
   listEl.querySelectorAll('.remove-company').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const remaining = loadWatchlist().filter((c) => c.isin !== btn.dataset.isin);
+      const remaining = loadWatchlist().filter((c) => c.lei !== btn.dataset.lei);
       saveWatchlist(remaining);
       renderWatchlist();
       loadReports();
@@ -50,25 +50,25 @@ function renderWatchlist() {
   });
 }
 
-function addCompany(isin, name) {
-  const errorEl = document.getElementById('isin-error');
-  const normalisedIsin = isin.trim().toUpperCase();
+function addCompany(lei, name) {
+  const errorEl = document.getElementById('lei-error');
+  const normalisedLei = lei.trim().toUpperCase();
 
-  if (!ISIN_RE.test(normalisedIsin)) {
-    errorEl.textContent = 'That doesn\'t look like a valid ISIN (12 letters/digits, e.g. GB00BK1PKQ95).';
+  if (!LEI_RE.test(normalisedLei)) {
+    errorEl.textContent = 'That doesn\'t look like a valid LEI (20 letters/digits, e.g. 549300UC0QPP7Y0W8056).';
     errorEl.hidden = false;
     return false;
   }
 
   const watchlist = loadWatchlist();
-  if (watchlist.some((c) => c.isin === normalisedIsin)) {
-    errorEl.textContent = 'That ISIN is already in your list.';
+  if (watchlist.some((c) => c.lei === normalisedLei)) {
+    errorEl.textContent = 'That LEI is already in your list.';
     errorEl.hidden = false;
     return false;
   }
 
   errorEl.hidden = true;
-  watchlist.push({ isin: normalisedIsin, name: name.trim() });
+  watchlist.push({ lei: normalisedLei, name: name.trim() });
   saveWatchlist(watchlist);
   renderWatchlist();
   return true;
@@ -84,36 +84,36 @@ async function loadReports() {
   debugEl.textContent = '';
 
   if (watchlist.length === 0) {
-    statusEl.textContent = 'Add a company ISIN above to see its reports.';
+    statusEl.textContent = 'Add a company LEI above to see its reports.';
     return;
   }
 
   statusEl.textContent = 'Loading…';
 
   try {
-    const isins = watchlist.map((c) => c.isin).join(',');
-    const res = await fetch(`/api/reports?isins=${encodeURIComponent(isins)}`);
+    const leis = watchlist.map((c) => c.lei).join(',');
+    const res = await fetch(`/api/reports?leis=${encodeURIComponent(leis)}`);
     const data = await res.json();
 
     if (!res.ok) {
       statusEl.textContent = `Error: ${data.error || res.status}`;
-      if (data.details) debugEl.textContent = data.details;
+      if (data.details) debugEl.textContent = JSON.stringify(data.details, null, 2);
       return;
     }
 
-    statusEl.textContent = `${data.count} report(s) found since ${data.dateFrom} (scanned ${data.scanned} recent RNS item(s)).`;
+    statusEl.textContent = `${data.count} report(s) found since ${data.dateFrom} (scanned ${data.scanned} item(s) across ${watchlist.length} compan${watchlist.length === 1 ? 'y' : 'ies'}).`;
 
     if (data.count === 0) {
       listEl.innerHTML = '<li class="empty">No half-year or annual reports in the last week.</li>';
     }
 
-    const namesByIsin = new Map(watchlist.map((c) => [c.isin, c.name]));
+    const namesByLei = new Map(watchlist.map((c) => [c.lei, c.name]));
 
     for (const report of data.reports) {
       const li = document.createElement('li');
       li.className = 'report';
       const date = report.publishedAt ? new Date(report.publishedAt).toLocaleString() : 'Unknown date';
-      const company = (namesByIsin.get(report.isin) || '').trim() || report.company;
+      const company = (namesByLei.get(report.lei) || '').trim() || report.company;
       const titleHtml = report.url
         ? `<a href="${escapeHtml(report.url)}" target="_blank" rel="noopener">${escapeHtml(report.title)}</a>`
         : escapeHtml(report.title);
@@ -126,9 +126,9 @@ async function loadReports() {
       listEl.appendChild(li);
     }
 
-    // Show every item Ticker returned (matched or not) so a missing report
-    // can be diagnosed: absent entirely (not returned by Ticker for this
-    // ISIN/window) vs. present but excluded by the report-type keyword match.
+    // Every item the NSM search returned for these companies this week
+    // (matched or not) - since company_lei actually filters server-side,
+    // this is a short, focused list rather than a market-wide dump.
     debugEl.textContent = JSON.stringify(data.scannedItems || [], null, 2);
   } catch (err) {
     statusEl.textContent = `Failed to load: ${err}`;
@@ -137,13 +137,13 @@ async function loadReports() {
 
 document.getElementById('add-company-form').addEventListener('submit', (e) => {
   e.preventDefault();
-  const isinInput = document.getElementById('isin-input');
+  const leiInput = document.getElementById('lei-input');
   const nameInput = document.getElementById('name-input');
 
-  if (addCompany(isinInput.value, nameInput.value)) {
-    isinInput.value = '';
+  if (addCompany(leiInput.value, nameInput.value)) {
+    leiInput.value = '';
     nameInput.value = '';
-    isinInput.focus();
+    leiInput.focus();
     loadReports();
   }
 });

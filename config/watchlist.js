@@ -1,7 +1,12 @@
-// Companies tracked by this site. Add/remove entries here.
-// `isin` is required — it's matched against the ISIN field on each RNS
-// disclosure item returned by the Ticker API. `name` is just a display
-// label; fill it in once you've confirmed the company for a given ISIN.
+// Fallback companies, used only when /api/reports is called with no `leis`
+// query parameter (e.g. hitting the API directly). The web UI always passes
+// its own `leis` from the browser's localStorage-backed list, so editing
+// this file has no effect on the page itself.
+//
+// `lei` is the company's Legal Entity Identifier (20 alphanumeric
+// characters) - the FCA's National Storage Mechanism has no ISIN field, so
+// filings are looked up by LEI, not ISIN. Find a company's LEI by searching
+// for it by name at https://data.fca.org.uk (National Storage Mechanism).
 module.exports = [
-  { isin: 'GB00BK1PKQ95', name: '' }, // TODO: set the display name for this ISIN
+  { lei: '549300UC0QPP7Y0W8056', name: 'Fidelity European Trust plc' },
 ];

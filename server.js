@@ -19,7 +19,7 @@ const server = http.createServer(async (req, res) => {
   const parsed = new URL(req.url, `http://${req.headers.host}`);
 
   if (parsed.pathname === '/api/reports') {
-    const { status, body } = await fetchReports({ isins: parsed.searchParams.get('isins') });
+    const { status, body } = await fetchReports({ leis: parsed.searchParams.get('leis') });
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(body));
     return;

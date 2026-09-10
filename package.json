@@ -2,7 +2,7 @@
   "name": "rns-update",
   "version": "1.0.0",
   "private": true,
-  "description": "Lightweight site that pulls financial-report RNS disclosures for a watchlist of companies via the Ticker API.",
+  "description": "Lightweight site that pulls half-year/annual report disclosures for a watchlist of companies from the FCA's National Storage Mechanism.",
   "scripts": {
     "start": "node server.js"
   },

@@ -1,127 +1,137 @@
 # RNS Update
 
-A lightweight site that shows **half-year and annual report** RNS
-disclosures from the last 7 days, for a list of companies you manage
-yourself in the page, using the [Ticker API](https://developers.ticker.app/docs).
+A lightweight site that shows **half-year and annual report** disclosures
+from the last 7 days, for a list of companies you manage yourself in the
+page — sourced directly from the FCA's **National Storage Mechanism**
+(data.fca.org.uk), the UK regulator's public repository for company
+disclosures. No API key, no account, no cost.
 
-Static HTML/CSS/JS frontend + a small serverless function that calls Ticker
-server-side, so the API key never reaches the browser.
+Static HTML/CSS/JS frontend + a small serverless function that proxies the
+NSM search so the browser doesn't need to talk to it directly.
 
 ## Setup
 
-1. `cp .env.example .env` and set `TICKER_API_KEY` to your real key.
-2. Run locally:
+1. Run locally:
    ```
    npm start
    ```
-   then open http://localhost:3000.
-3. Add companies to track using the ISIN field at the top of the page (an
+   then open http://localhost:3000. No `.env` setup needed — see `.env.example`.
+2. Add companies to track using the **LEI** field at the top of the page (an
    optional display name is stored alongside it). The list is kept in the
-   browser's `localStorage`, per browser/device — there's no server-side
-   watchlist to edit anymore.
+   browser's `localStorage`, per browser/device.
 
-`config/watchlist.js` still exists as a fallback: if `/api/reports` is
-called with no `isins` query parameter (e.g. hitting the API directly), it
-uses that file's list instead. The web UI always passes its own `isins`, so
-editing that file has no effect on the page.
+`config/watchlist.js` exists as a fallback: if `/api/reports` is called with
+no `leis` query parameter (e.g. hitting the API directly), it uses that
+file's list instead. The web UI always passes its own `leis`, so editing
+that file has no effect on the page.
+
+### Why LEI, not ISIN or ticker
+
+The NSM has no ISIN field at all — filings are indexed by **LEI** (Legal
+Entity Identifier, a 20-character code) and company name, confirmed from a
+real search export. To find a company's LEI: search for it by name at
+https://data.fca.org.uk (National Storage Mechanism) and copy the LEI shown
+against its filings.
 
 ## Deploying (Vercel)
 
 This repo needs no build step — Vercel's zero-config Node setup serves the
 root static files and auto-detects `api/reports.js` as a serverless
-function. Just import the repo into Vercel and set `TICKER_API_KEY` as an
-environment variable in the project settings (Settings → Environment
-Variables). Any other platform that runs a plain Node server also works via
-`npm start`.
+function. Just import the repo into Vercel — no environment variables
+required.
 
 ## Deploying (Render)
 
 `server.js` is a plain persistent Node server (not serverless functions), so
 it maps directly onto a Render **Web Service** — Render doesn't need
 `api/reports.js` at all, since `server.js` already serves `/api/reports`
-itself. `render.yaml` in the repo root is a Blueprint for this:
-
-1. In the Render dashboard: **New → Blueprint**, point it at this repo. It
-   will read `render.yaml` and create a Web Service with:
-   - Build command: `npm install`
-   - Start command: `npm start`
-2. After the service is created, set `TICKER_API_KEY` under its
-   **Environment** tab (the blueprint declares the var but marks it
-   `sync: false`, so Render prompts you for the real value rather than
-   storing it in the repo).
-3. Render sets `PORT` itself; `server.js` already reads
-   `process.env.PORT`, so no change is needed there.
+itself. `render.yaml` in the repo root is a Blueprint for this: in the
+Render dashboard, **New → Blueprint**, point it at this repo. It builds with
+`npm install` and starts with `npm start`; Render sets `PORT` itself, which
+`server.js` already reads. No environment variables required.
 
 Without the blueprint, the same result comes from **New → Web Service** →
-connect the repo → Build Command `npm install`, Start Command `npm start`,
-then add `TICKER_API_KEY` as an environment variable.
+connect the repo → Build Command `npm install`, Start Command `npm start`.
 
 ## API integration notes
 
-Field names and the request/response shape are now taken from the official
-Ticker API reference (https://developers.ticker.app/api-reference), not
-guessed:
+This is **not a documented public API** — there is no official developer
+API for the NSM. The request shape below was captured by watching the
+actual browser network traffic on data.fca.org.uk (DevTools → Network tab)
+while performing a real search, not from any published reference. That
+means it could change, add rate limiting, or start blocking non-browser
+traffic without notice, with no changelog to warn us. Treat this
+integration as inherently more fragile than a documented API, and revisit
+it if reports stop showing up.
 
 ```
-GET https://api.tickerapp.net/v2/disclosures/sources/rns/items?pageSize=200&dateFrom=<yyyy-mm-dd>&pageCursor=<cursor>
-x-api-key: <your key>
+POST https://api.data.fca.org.uk/search?index=nsm-search
+Content-Type: application/json
+
+{
+  "from": 0, "size": 100, "sort": "submitted_date", "sortorder": "desc",
+  "criteriaObj": {
+    "criteria": [
+      { "name": "company_lei", "value": ["", "<LEI>", "disclose_org", "related_org"] },
+      { "name": "latest_flag", "value": "Y" }
+    ],
+    "dateCriteria": [
+      { "name": "publication_date", "value": { "from": "<iso>", "to": "<iso>" } },
+      { "name": "submitted_date", "value": { "from": "<iso>", "to": "<iso>" } }
+    ]
+  }
+}
 ```
 
-- **The `isins` query filter does not restrict results.** Confirmed with a
-  real key: a request scoped to one ISIN came back with the general,
-  unfiltered market-wide RNS feed (every issuer, every disclosure type).
-  Because of that, the app treats `isins` as unreliable and does the real
-  filtering itself: `fetchAllItems()` in `lib/fetchReports.js` walks
-  `pageCursor` across the whole feed, and only `isinOf(item)` matching the
-  requested list decides what counts — the query param is still sent (in
-  case a future Ticker deploy fixes it) but nothing depends on it working.
-- Pagination is bounded by `MAX_PAGES` (default 10, override with the
-  `TICKER_MAX_PAGES` env var) to protect the weekly request quota — **each
-  page-load/refresh can cost up to that many Ticker requests**, not one.
-  It stops early once a page's oldest item predates `dateFrom` (items come
-  back newest-first) or Ticker stops offering a `nextCursor`, so a working
-  `dateFrom` filter keeps the real cost far below the cap in practice.
-- `dateFrom` defaults to 7 days before the request (`defaultDateFrom()` in
-  `lib/fetchReports.js`) and is sent to Ticker, but per the point above
-  isn't assumed to be enforced — the pagination's own newest-first cutoff
-  check is what actually guarantees the window.
-- Item fields are read from the confirmed response shape: `headline`,
-  `timestamp`, `issuer.name`, `issuer.instrument.isin`,
-  `issuer.instrument.symbol.mnemonic`, and `category[].name`.
-- Results are further filtered to half-year/annual reports only
-  (`REPORT_KEYWORDS` in `lib/fetchReports.js`), matched against the headline
-  and category name — see the caveat below.
-- A `429` is reported distinctly (it can be either the per-second throttle
-  or the weekly quota); one retry with backoff is attempted if the response
-  carries a `Retry-After` header, otherwise the error is surfaced
-  immediately rather than spinning against a quota that won't clear until
-  the weekly reset.
+- **`company_lei` genuinely filters server-side** — confirmed by a real
+  response where every hit matched the requested LEI. This is the opposite
+  of what we found with Ticker's `isins` param, and it's why the app makes
+  **one request per watched company** (`fetchForLei()` in
+  `lib/fetchReports.js`) instead of paginating the whole market feed.
+- The response is a raw Elasticsearch result (`hits.hits[]._source`), also
+  confirmed from a real capture. Report type is the `type` field — exact
+  values `"Half-year Financial Report"` and `"Annual Financial Report"`
+  (see `REPORT_TYPES` in `lib/fetchReports.js`) rather than a keyword guess
+  against free text, since we have confirmed real values this time.
+- `download_link` in the response is a path relative to
+  `https://data.fca.org.uk/artefacts/` (confirmed by comparing a CSV export's
+  full download URL against the API's relative one for the same document).
+- The four-element `company_lei` value array (`["", "<LEI>", "disclose_org",
+  "related_org"]`) is used exactly as captured from a real browser request —
+  the leading empty string and the two flag strings are unexplained (there's
+  no documentation to explain them) and kept as-is rather than guessed at.
+- No API key, and no documented rate limit — meaning also no documented
+  *allowance*. Keep usage light (this app already does, at one request per
+  company per refresh) and don't assume it can take sustained/bulk traffic.
+- A handful of filings come through a different shape (seen once: a "Direct
+  Upload" PDF factsheet with `ContentVersionId`/`html_link` fields instead
+  of the usual RNS/PRN shape). `normalise()` handles this by only relying on
+  fields both shapes share.
 
-### Still unconfirmed / worth checking once you have a real key
+### Known limitations
 
-- **`publication` entry shape.** The reference response shows
-  `"publication": [...]` without specifying the fields on each entry.
-  `documentUrlOf()` in `lib/fetchReports.js` defensively tries
-  `url`/`link`/`href`/`documentUrl`. Check the "Raw JSON" debug panel on the
-  page and fix this lookup if the guess is wrong.
-- **Half-year/annual report filtering** still matches on headline/category-name
-  keywords (`REPORT_KEYWORDS` in `lib/fetchReports.js`) rather than
-  the `fcaCategory`/`tickerCategory` codes, since the code-to-meaning mapping
-  (e.g. which of `AA, BC, CS, CU, DD, DI, HO, ME, RE, TU, XX` means
-  "results") isn't in the reference excerpt available. If you confirm the
-  mapping, filtering via `fcaCategories`/`tickerCategories` server-side would
-  be more efficient than the keyword heuristic.
-- **Weekly quota cost.** Since every refresh may page through up to
-  `MAX_PAGES` requests, a busy market day could mean 10 Ticker requests for
-  a single page load. If your plan's weekly quota is small, lower
-  `TICKER_MAX_PAGES` and/or shorten `DEFAULT_WINDOW_DAYS`.
+- **CORS headers in the real request (`Origin`/`Referer`) are browser-only
+  concerns** and don't apply to this server-to-server call, but the
+  server-side code sends browser-like headers anyway (`BROWSER_LIKE_HEADERS`
+  in `lib/fetchReports.js`) in case the endpoint also enforces them
+  server-side as informal bot filtering — unconfirmed either way, since it
+  can't be tested from a sandboxed environment with no network access to
+  `data.fca.org.uk`.
+- No pagination: `size: 100` per company per week. Fine for a normal
+  company's weekly filing volume (the real capture showed roughly 10-15
+  items/week for one company), but a company with unusually heavy filing
+  activity in a week could exceed it and silently miss older items in that
+  window.
+- The debug panel ("All items returned this week") shows every item for
+  every watched company, un-truncated — safe to leave on since it's no
+  longer a market-wide dump like the old Ticker version could produce.
 
 ## Project layout
 
 ```
-index.html, style.css, app.js   Frontend: ISIN watchlist manager (localStorage) + reports list
+index.html, style.css, app.js   Frontend: LEI watchlist manager (localStorage) + reports list
 api/reports.js                  Vercel serverless function entrypoint
-lib/fetchReports.js             Ticker API call + filtering logic (shared by api/ and server.js)
+lib/fetchReports.js             NSM search call + filtering logic (shared by api/ and server.js)
 server.js                       Plain Node dev server (static files + /api/reports)
-config/watchlist.js             Fallback ISIN list, used only when /api/reports is called with no `isins` param
+config/watchlist.js             Fallback LEI list, used only when /api/reports is called with no `leis` param
 ```

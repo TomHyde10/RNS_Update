@@ -62,7 +62,7 @@ button:hover { border-color: var(--accent); }
   color: var(--fg);
 }
 
-#isin-input { flex: 1 1 12rem; }
+#lei-input { flex: 1 1 12rem; }
 #name-input { flex: 1 1 12rem; }
 
 .error { color: #d64545; font-size: 0.85rem; margin: 0.5rem 0 0; }
@@ -86,7 +86,7 @@ button:hover { border-color: var(--accent); }
   font-size: 0.85rem;
 }
 
-.company-tag .isin { color: var(--muted); font-size: 0.8rem; }
+.company-tag .lei { color: var(--muted); font-size: 0.8rem; }
 
 .remove-company {
   border: none;

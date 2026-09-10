@@ -9,18 +9,18 @@
 <body>
   <header>
     <h1>RNS Update</h1>
-    <p>Half-year and annual reports from the last week, for the companies below.</p>
+    <p>Half-year and annual reports from the last week, for the companies below — sourced directly from the FCA's National Storage Mechanism, no API key required.</p>
   </header>
 
   <main>
     <section id="watchlist-manager">
       <h2>Companies</h2>
       <form id="add-company-form">
-        <input id="isin-input" type="text" placeholder="ISIN e.g. GB00BK1PKQ95" maxlength="12" autocomplete="off" required />
+        <input id="lei-input" type="text" placeholder="LEI e.g. 549300UC0QPP7Y0W8056" maxlength="20" autocomplete="off" required />
         <input id="name-input" type="text" placeholder="Display name (optional)" autocomplete="off" />
         <button type="submit">Add</button>
       </form>
-      <p id="isin-error" class="error" hidden></p>
+      <p id="lei-error" class="error" hidden></p>
       <ul id="company-list"></ul>
     </section>
 
@@ -31,7 +31,7 @@
     <ul id="reports"></ul>
 
     <details>
-      <summary>All items Ticker returned (matched or not) — for diagnosing a missing report</summary>
+      <summary>All items returned this week (matched or not) — for diagnosing a missing report</summary>
       <pre id="debug"></pre>
     </details>
   </main>
