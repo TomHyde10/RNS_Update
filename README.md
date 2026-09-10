@@ -60,14 +60,28 @@ report appears.
 
 Sending goes through standard SMTP via [nodemailer](https://nodemailer.com/)
 (`lib/sendNotification.js`, `/api/notify`) — a genuinely documented,
-well-established mechanism, unlike the NSM integration below. It needs five
-environment variables set (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
-`SMTP_PASS`, `NOTIFY_EMAIL_FROM`, `NOTIFY_EMAIL_TO` — see `.env.example`);
-if any are missing, clicking the button shows an error naming which ones,
-rather than silently failing or guessing a recipient. No email address is
-hardcoded anywhere in the app or committed to the repo — you supply your own
-mailbox/service credentials and recipient address as environment variables
-on whichever platform you deploy to (or in your shell for local dev).
+well-established mechanism, unlike the NSM integration below. It's split
+into two halves with different requirements:
+
+- **Sending account (server-side, required):** `SMTP_HOST`, `SMTP_PORT`,
+  `SMTP_USER`, `SMTP_PASS`, `NOTIFY_EMAIL_FROM` — see `.env.example`. These
+  are secrets, so they're only ever set as environment variables on
+  whichever platform you deploy to (or your shell for local dev) — there's
+  no UI for them, and nothing is hardcoded or committed to the repo. If any
+  are missing, clicking the button shows an error naming which ones, rather
+  than silently failing.
+- **Recipient address (per-browser, no deployment step needed):** the first
+  time you click Send Notification (or via the "Notification email" panel
+  in the sidebar), an overlay asks for the email that should receive
+  notifications and saves it to that browser's `localStorage` — it's then
+  sent as `to` on every subsequent notify request from that browser. Setting
+  `NOTIFY_EMAIL_TO` server-side is optional and only used as a fallback for
+  a request that doesn't supply its own `to`.
+
+Note this means the sending account credentials are still a hard requirement
+regardless of the overlay — there is currently no way to configure those
+through the UI, since they're secrets that shouldn't live in browser storage
+or be resent with every request.
 
 This hasn't been exercised against a real SMTP server from this environment
 (no network access here to verify it end-to-end) — the first real click
