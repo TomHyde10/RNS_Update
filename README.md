@@ -16,15 +16,14 @@ NSM search so the browser doesn't need to talk to it directly.
    npm start
    ```
    then open http://localhost:3000. No `.env` setup needed — see `.env.example`.
-2. The page seeds itself with `config/watchlist.js`'s default companies the
-   first time it loads in a given browser (via `/api/watchlist` — see
-   `initWatchlist()` in `app.js`). From there, add more using the **LEI**
-   field at the top of the page (an optional display name is stored
-   alongside it), or the bulk ISIN box below it. The list lives in that
-   browser's `localStorage` from then on — editing `config/watchlist.js`
-   later only affects brand-new browsers that haven't loaded the page yet,
-   or a browser whose storage was cleared. Removing every company on
-   purpose is respected and won't silently reseed on the next visit.
+2. `config/watchlist.js`'s default companies are merged into the browser's
+   watchlist on **every** page load (via `/api/watchlist` — see
+   `initWatchlist()` in `app.js`), not just the first, so they're always
+   present at startup. Removing one of the defaults via the page only lasts
+   until the next reload, since it's added back in; companies you add
+   beyond the defaults (LEI field, or the bulk ISIN box) are untouched by
+   this and persist normally. The list otherwise lives in that browser's
+   `localStorage`.
 3. Under "Search settings", choose a **time period** (24 hours to 90 days)
    and the **report types** to match — a comma-separated list matched
    exactly against the filing's category (defaults to "Half-year Financial

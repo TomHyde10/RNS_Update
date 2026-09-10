@@ -12,61 +12,66 @@
     <p>Company report disclosures for the time period and types below — sourced directly from the FCA's National Storage Mechanism, no API key required.</p>
   </header>
 
-  <main>
-    <section id="watchlist-manager">
-      <h2>Companies</h2>
-      <form id="add-company-form">
-        <input id="lei-input" type="text" placeholder="LEI e.g. 549300UC0QPP7Y0W8056" maxlength="20" autocomplete="off" required />
-        <input id="name-input" type="text" placeholder="Display name (optional)" autocomplete="off" />
-        <button type="submit">Add</button>
-      </form>
-      <p id="lei-error" class="error" hidden></p>
-      <ul id="company-list"></ul>
+  <div class="layout">
+    <aside class="sidebar">
+      <section id="watchlist-manager" class="panel">
+        <h2>Companies</h2>
+        <form id="add-company-form">
+          <input id="lei-input" type="text" placeholder="LEI e.g. 549300UC0QPP7Y0W8056" maxlength="20" autocomplete="off" required />
+          <input id="name-input" type="text" placeholder="Display name (optional)" autocomplete="off" />
+          <button type="submit">Add</button>
+        </form>
+        <p id="lei-error" class="error" hidden></p>
+        <ul id="company-list"></ul>
 
-      <details id="bulk-add">
-        <summary>Add multiple companies by ISIN</summary>
-        <p class="hint">Paste ISINs, one per line (or comma/space-separated). Each is resolved to its LEI via GLEIF, then added to the list above.</p>
-        <textarea id="bulk-isin-input" rows="6" placeholder="GB0003052338&#10;GB0001990497&#10;..."></textarea>
-        <button type="button" id="bulk-resolve-btn">Resolve &amp; add</button>
-        <pre id="bulk-status"></pre>
+        <details id="bulk-add">
+          <summary>Add multiple by ISIN</summary>
+          <p class="hint">Paste ISINs, one per line (or comma/space-separated). Each is resolved to its LEI via GLEIF, then added to the list above.</p>
+          <textarea id="bulk-isin-input" rows="5" placeholder="GB0003052338&#10;GB0001990497&#10;..."></textarea>
+          <button type="button" id="bulk-resolve-btn">Resolve &amp; add</button>
+          <pre id="bulk-status"></pre>
+        </details>
+      </section>
+
+      <section id="settings-manager" class="panel">
+        <h2>Search settings</h2>
+        <form id="settings-form">
+          <label>
+            Time period
+            <select id="days-select">
+              <option value="1">Last 24 hours</option>
+              <option value="7">Last 7 days</option>
+              <option value="14">Last 14 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="90">Last 90 days</option>
+            </select>
+          </label>
+          <label>
+            Report types
+            <input id="categories-input" type="text" autocomplete="off" />
+          </label>
+          <p class="hint">Comma-separated, matched exactly against the filing category.</p>
+          <div class="settings-buttons">
+            <button type="submit">Apply</button>
+            <button type="button" id="categories-reset">Reset</button>
+          </div>
+        </form>
+      </section>
+    </aside>
+
+    <main class="main-content">
+      <div id="reports-header">
+        <p id="status">Loading…</p>
+        <button id="refresh">Refresh</button>
+      </div>
+      <ul id="reports"></ul>
+
+      <details>
+        <summary>All items returned in this period (matched or not) — for diagnosing a missing report</summary>
+        <pre id="debug"></pre>
       </details>
-    </section>
-
-    <section id="settings-manager">
-      <h2>Search settings</h2>
-      <form id="settings-form">
-        <label>
-          Time period
-          <select id="days-select">
-            <option value="1">Last 24 hours</option>
-            <option value="7">Last 7 days</option>
-            <option value="14">Last 14 days</option>
-            <option value="30">Last 30 days</option>
-            <option value="90">Last 90 days</option>
-          </select>
-        </label>
-        <label>
-          Report types (comma-separated, matched exactly against the filing category)
-          <input id="categories-input" type="text" autocomplete="off" />
-        </label>
-        <div class="settings-buttons">
-          <button type="submit">Apply</button>
-          <button type="button" id="categories-reset">Reset types to default</button>
-        </div>
-      </form>
-    </section>
-
-    <div id="reports-header">
-      <p id="status">Loading…</p>
-      <button id="refresh">Refresh</button>
-    </div>
-    <ul id="reports"></ul>
-
-    <details>
-      <summary>All items returned in this period (matched or not) — for diagnosing a missing report</summary>
-      <pre id="debug"></pre>
-    </details>
-  </main>
+    </main>
+  </div>
 
   <script src="app.js"></script>
 </body>

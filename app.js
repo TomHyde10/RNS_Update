@@ -25,29 +25,37 @@ function saveWatchlist(list) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
 }
 
-// Seeds a brand-new browser's watchlist from the server's default list
-// (config/watchlist.js, via /api/watchlist) the first time it's ever loaded
-// here. Distinguishes "never initialized" (localStorage key absent) from
-// "deliberately emptied" (key present but set to "[]") so removing every
-// company on purpose doesn't get silently undone on the next visit. If the
-// fetch fails, the key is left unset so the next page load retries rather
-// than permanently stranding a first-time visitor with nothing.
+// Ensures the server's default companies (config/watchlist.js, via
+// /api/watchlist) are present every time the page starts up, not just on
+// first visit - any missing default is merged back in on every load, so
+// removing one via the UI only lasts until the next reload. Companies you've
+// added beyond the defaults are left untouched either way. If the fetch
+// fails, this just leaves whatever's already in localStorage alone.
 async function initWatchlist() {
-  if (localStorage.getItem(STORAGE_KEY) !== null) return;
-
   try {
     const res = await fetch('/api/watchlist');
     if (!res.ok) return;
 
     const data = await res.json();
     const companies = Array.isArray(data.companies) ? data.companies : [];
-    const cleaned = companies
+    const defaults = companies
       .filter((c) => c && typeof c.lei === 'string' && LEI_RE.test(c.lei.toUpperCase()))
       .map((c) => ({ lei: c.lei.toUpperCase(), name: (c.name || '').trim() }));
 
-    saveWatchlist(cleaned);
+    const existing = loadWatchlist();
+    const existingLeis = new Set(existing.map((c) => c.lei));
+    const merged = existing.slice();
+
+    for (const d of defaults) {
+      if (!existingLeis.has(d.lei)) {
+        merged.push(d);
+        existingLeis.add(d.lei);
+      }
+    }
+
+    if (merged.length !== existing.length) saveWatchlist(merged);
   } catch {
-    // Leave uninitialized - retried on the next page load.
+    // Leave localStorage as-is - proceed with whatever's already there.
   }
 }
 
