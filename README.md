@@ -93,72 +93,6 @@ hitting the API directly).
   (or adopts the days/categories as your active settings) — it never removes
   or replaces anything already saved, so a shared link can't clobber your
   list even if it names totally different companies.
-- **Summarise**: a per-report "Summarise" button fetches that report's
-  linked document, extracts its text, and sends it to the **Claude API**
-  for a short bullet-point summary. See "Summarise (Claude API)" below for
-  setup and cost notes; the button is present either way, but shows a clear
-  "not configured" error until `ANTHROPIC_API_KEY` is set. Summaries are
-  cached client-side per report (indefinitely — a published filing's
-  document doesn't change, so a cached summary of it never goes stale) so
-  re-clicking an already-summarised report costs no new fetch or API call.
-
-### Summarise (Claude API)
-
-The "Summarise" button on each report calls the **Claude API** via the
-official [`@anthropic-ai/sdk`](https://www.npmjs.com/package/@anthropic-ai/sdk)
-(`lib/summarise.js`) to produce a short bullet-point summary of that
-report's document. Setup is one env var:
-
-```
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-Get a key at [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys),
-set it wherever you deploy (Render/Vercel dashboard, or your shell for
-local dev), and the button works — no server to run, no localhost/cloud
-networking caveat, unlike a self-hosted setup would need.
-
-- **Model**: defaults to `claude-haiku-4-5` — fast and inexpensive, plenty
-  for a short bullet-point summary. Override with `ANTHROPIC_MODEL` (e.g.
-  `claude-opus-5`) for higher-quality summaries at Opus-tier pricing.
-- **Cost**: each click is a real, billed API call against your Anthropic
-  account — there's no free tier or local fallback. A single summary
-  (roughly 2000 input tokens after the 8000-character truncation below, a
-  few hundred output tokens) costs a small fraction of a cent at Haiku
-  rates; summaries are cached client-side per report specifically to avoid
-  paying for the same document twice (see the feature list above).
-- **Refusals**: if Claude declines to summarise a document (safety
-  classifier, not a network/config error), the button shows that plainly
-  rather than a generic failure.
-
-Document handling (`lib/extractDocumentText.js`) is unchanged by the LLM
-backend:
-- Most filings are PDFs, parsed with [`pdf-parse`](https://www.npmjs.com/package/pdf-parse)
-  (pinned to `1.1.1`, its last release with the simple `pdf(buffer) ->
-  {text}` API, rather than the `2.x` rewrite which pulls in `pdfjs-dist` and
-  a heavier class-based API this app doesn't need).
-- The occasional HTML "Direct Upload" filing (see "Known limitations" below)
-  is handled with basic tag-stripping instead — good enough for a
-  summarisation prompt, not a general-purpose HTML-to-text tool.
-- Extracted text is truncated to `SUMMARISE_MAX_INPUT_CHARS` (default 8000)
-  before being sent to Claude — comfortably inside any current model's
-  context window, so this is purely a cost/latency knob for unusually long
-  filings, not a capability limit. The summary itself notes when truncation
-  happened.
-
-This is the least testable feature in the app from this environment: there
-is no network access here to any FCA artefact host, so the real end-to-end
-path (fetching a live filing, then summarising it) has never run against a
-real document — though the Claude API call itself follows the official SDK
-exactly as documented, unlike the earlier self-hosted design this replaced,
-which also had to guess at an inference server's exact response shape.
-What was verified instead: `pdf-parse` correctly extracts text from a real
-PDF fixture, the HTML tag-stripping path, the exact request shape sent to
-`client.messages.create` (model, `max_tokens`, prompt content) against a
-mocked SDK response, the missing-`ANTHROPIC_API_KEY` error path, the
-`ANTHROPIC_MODEL` override, and refusal handling. The first real click
-after setting `ANTHROPIC_API_KEY` is the genuine integration test for the
-document-fetch half of the pipeline.
 
 ### Why LEI, not ISIN or ticker
 
@@ -193,16 +127,6 @@ Render dashboard, **New → Blueprint**, point it at this repo. It builds with
 
 Without the blueprint, the same result comes from **New → Web Service** →
 connect the repo → Build Command `npm install`, Start Command `npm start`.
-
-## Deploying as a Power Automate flow (no hosting needed)
-
-If you'd rather not deploy this app anywhere at all, [`docs/power-automate-flow.md`](docs/power-automate-flow.md)
-is a step-by-step build guide for a Power Automate cloud flow that
-re-implements the NSM search + filtering directly as flow actions
-(Recurrence trigger → HTTP → Parse JSON → filter → Outlook email), using
-the exact request shape verified below. Requires a Power Automate
-Premium/Process license for the generic `HTTP` action — see that doc for
-details before you start building.
 
 ## API integration notes
 
@@ -341,13 +265,9 @@ api/reports.js                  Vercel serverless function: GET /api/reports
 api/resolve.js                  Vercel serverless function: GET /api/resolve (ISIN -> LEI via GLEIF)
 api/watchlist.js                Vercel serverless function: GET /api/watchlist (seeds a fresh browser)
 api/feed.js                     Vercel serverless function: GET /api/feed (RSS feed of matching reports)
-api/summarise.js                Vercel serverless function: POST /api/summarise (fetch + LLM-summarise a report's document)
 lib/fetchReports.js             NSM search call + filtering logic (shared by api/ and server.js)
 lib/resolveIsin.js              GLEIF ISIN->LEI resolution (shared by api/ and server.js)
 lib/buildFeed.js                Builds the RSS 2.0 XML for /api/feed (shared by api/ and server.js)
-lib/extractDocumentText.js      Fetches a report's PDF/HTML document and extracts plain text (shared by api/ and server.js)
-lib/summarise.js                Calls the Claude API (@anthropic-ai/sdk) to summarise extracted text (shared by api/ and server.js)
-server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist + /api/feed + /api/summarise)
+server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist + /api/feed)
 config/watchlist.js             Default company list - seeds a fresh browser, and fallback for /api/reports called with no `leis` param
-docs/power-automate-flow.md     Build guide for a Power Automate flow that re-implements the NSM search natively (no app hosting needed)
 ```
