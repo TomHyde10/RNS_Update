@@ -190,17 +190,49 @@ Content-Type: application/json
 - No API key, and no documented rate limit — meaning also no documented
   *allowance*. Keep usage light (this app already does, at one request per
   company per refresh) and don't assume it can take sustained/bulk traffic.
-- **Each company's raw results are cached in memory** for `NSM_CACHE_TTL_MINUTES`
+- **Each company's raw results are cached** for `NSM_CACHE_TTL_MINUTES`
   (default 10, `fetchForLeiCached()` in `lib/fetchReports.js`) — a refresh
   within that window reuses the cached data instead of re-querying NSM, so
   with a 21-company watchlist a burst of refreshes costs 21 requests once,
   not 21 every time. Keyed only by LEI, not by the requested time
   period/report types, since those are both filtered afterwards against the
   same raw item list; a request needing a longer window than what's cached
-  (a bigger `size`) is treated as a miss and re-fetched. This only helps on
-  a persistent process (Render, local dev) — Vercel's serverless functions
-  don't guarantee memory survives between invocations, so the cache is
-  largely ineffective there. Set `NSM_CACHE_TTL_MINUTES=0` to disable it.
+  (a bigger `size`) is treated as a miss and re-fetched. In-memory by
+  default (zero setup, but wiped on process restart); set `DATABASE_URL` to
+  back it with Postgres instead — see "Persistent cache (Postgres)" below.
+  Set `NSM_CACHE_TTL_MINUTES=0` to disable caching entirely.
+
+### Persistent cache (Postgres)
+
+By default the NSM cache above lives in memory, which is wiped every time
+the Node process restarts. On Render's **free** web service plan that
+happens after every idle spin-down — the next request cold-starts a fresh
+process with an empty cache, and would otherwise hit NSM once per watched
+company all at once, exactly the burst the cache exists to avoid.
+
+Setting `DATABASE_URL` makes `lib/cacheStore.js` store that same cache in
+Postgres instead (a single `nsm_cache` table: `lei` primary key, `items`
+JSONB, `size`, `fetched_at` — created automatically on first use). With no
+`DATABASE_URL` set, nothing changes: the app runs exactly as before,
+in-memory, zero setup. A Postgres outage or bad connection string doesn't
+break report loading either — a failed cache read/write is logged and
+treated as a cache miss, falling through to a fresh NSM fetch.
+
+**Setup on Render**: Render dashboard → **New → PostgreSQL**, then copy its
+**Internal Database URL** into your web service's `DATABASE_URL` environment
+variable (same Render region as the web service, so the internal URL is
+reachable). **Know the tradeoff before you provision one**: Render's free
+Postgres plan **expires and is deleted after 30 days** — fine for testing
+this, but not a real long-term store unless you're on a paid database plan.
+This isn't wired into `render.yaml` as a Blueprint resource deliberately,
+so deploying the Blueprint never silently provisions a database (and its
+30-day clock) you didn't ask for.
+
+Anywhere else (Neon, Supabase, your own Postgres, local dev), the same
+`DATABASE_URL` env var works the same way — this is a plain `pg.Pool`
+connection with `ssl: { rejectUnauthorized: false }` (the common pattern
+for providers whose certificate chain isn't in Node's default trust store;
+the connection is still encrypted, just not certificate-verified).
 - **Batching multiple LEIs into a single request is untested.** The
   `company_lei` value array has only ever been sent/confirmed with one LEI;
   whether NSM's search accepts several at once (which would cut the
@@ -261,6 +293,7 @@ api/resolve.js                  Vercel serverless function: GET /api/resolve (IS
 api/watchlist.js                Vercel serverless function: GET /api/watchlist (seeds a fresh browser)
 api/feed.js                     Vercel serverless function: GET /api/feed (RSS feed of matching reports)
 lib/fetchReports.js             NSM search call + filtering logic (shared by api/ and server.js)
+lib/cacheStore.js               Optional Postgres-backed NSM cache (used when DATABASE_URL is set - see README)
 lib/resolveIsin.js              GLEIF ISIN->LEI resolution (shared by api/ and server.js)
 lib/buildFeed.js                Builds the RSS 2.0 XML for /api/feed (shared by api/ and server.js)
 server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist + /api/feed)
