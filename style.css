@@ -98,6 +98,28 @@ button:hover { border-color: var(--accent); }
   font-size: 1rem;
 }
 
+#bulk-add { margin-top: 1rem; }
+#bulk-add summary { cursor: pointer; color: var(--accent); font-size: 0.9rem; }
+#bulk-add .hint { color: var(--muted); font-size: 0.85rem; margin: 0.5rem 0; }
+
+#bulk-isin-input {
+  width: 100%;
+  font: inherit;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  resize: vertical;
+}
+
+#bulk-status {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
 #settings-manager { margin-bottom: 1.5rem; }
 #settings-manager h2 { font-size: 1rem; margin-bottom: 0.5rem; }
 

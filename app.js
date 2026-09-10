@@ -183,6 +183,56 @@ document.getElementById('add-company-form').addEventListener('submit', (e) => {
 
 document.getElementById('refresh').addEventListener('click', loadReports);
 
+document.getElementById('bulk-resolve-btn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('bulk-status');
+  const inputEl = document.getElementById('bulk-isin-input');
+  const isins = [...new Set(inputEl.value.split(/[\s,]+/).map((s) => s.trim().toUpperCase()).filter(Boolean))];
+
+  if (isins.length === 0) return;
+
+  statusEl.textContent = `Resolving ${isins.length} ISIN(s)…`;
+
+  try {
+    const res = await fetch(`/api/resolve?isins=${encodeURIComponent(isins.join(','))}`);
+    const data = await res.json();
+
+    if (!res.ok) {
+      statusEl.textContent = `Error: ${data.error || res.status}`;
+      return;
+    }
+
+    const watchlist = loadWatchlist();
+    const existingLeis = new Set(watchlist.map((c) => c.lei));
+    const lines = [];
+    let added = 0;
+
+    for (const r of data.results) {
+      if (r.error) {
+        lines.push(`✗ ${r.isin}: ${r.error}`);
+        continue;
+      }
+      if (existingLeis.has(r.lei)) {
+        lines.push(`- ${r.isin}: already in your list (${r.name || r.lei})`);
+        continue;
+      }
+      watchlist.push({ lei: r.lei, name: r.name || '' });
+      existingLeis.add(r.lei);
+      lines.push(`✓ ${r.isin} → ${r.name || r.lei}`);
+      added++;
+    }
+
+    saveWatchlist(watchlist);
+    renderWatchlist();
+    statusEl.textContent = lines.join('\n');
+    if (added > 0) {
+      inputEl.value = '';
+      loadReports();
+    }
+  } catch (err) {
+    statusEl.textContent = `Failed to resolve: ${err}`;
+  }
+});
+
 function initSettingsForm() {
   const daysSelect = document.getElementById('days-select');
   const categoriesInput = document.getElementById('categories-input');

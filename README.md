@@ -36,9 +36,15 @@ that file has no effect on the page.
 
 The NSM has no ISIN field at all — filings are indexed by **LEI** (Legal
 Entity Identifier, a 20-character code) and company name, confirmed from a
-real search export. To find a company's LEI: search for it by name at
-https://data.fca.org.uk (National Storage Mechanism) and copy the LEI shown
-against its filings.
+real search export. Rather than requiring everyone to look up LEIs by hand,
+the "Add multiple companies by ISIN" box on the page resolves ISINs to LEIs
+automatically via [GLEIF](https://www.gleif.org/en/lei-data/gleif-api)'s
+free, public, keyless lookup API (`lib/resolveIsin.js`, `/api/resolve`) — a
+genuinely documented API, unlike the NSM search itself. Paste one ISIN per
+line (or comma/space-separated) and it adds each resolved company straight
+to your watchlist, reporting per-ISIN failures (not found, GLEIF
+unreachable, etc.) rather than failing the whole batch. You can still add a
+company directly by LEI via the main form if you already know it.
 
 ## Deploying (Vercel)
 
@@ -61,6 +67,23 @@ Without the blueprint, the same result comes from **New → Web Service** →
 connect the repo → Build Command `npm install`, Start Command `npm start`.
 
 ## API integration notes
+
+### GLEIF (ISIN → LEI resolution)
+
+```
+GET https://api.gleif.org/api/v1/lei-records?filter[isin]=<ISIN>
+```
+
+Confirmed from a real response: `data[0].attributes.lei` and
+`data[0].attributes.entity.legalName.name`. One request per ISIN
+(`resolveIsins()` in `lib/resolveIsin.js`) — this only runs when you
+resolve companies to add, not on every report refresh, so the per-ISIN
+request count is an acceptable tradeoff against guessing whether
+`filter[isin]` accepts a comma-separated batch in one call (unconfirmed,
+so not relied on). Unlike the NSM search below, this is a real documented
+public API, so it's treated as comparatively solid ground.
+
+### NSM search (reports)
 
 This is **not a documented public API** — there is no official developer
 API for the NSM. The request shape below was captured by watching the
@@ -147,8 +170,10 @@ Content-Type: application/json
 
 ```
 index.html, style.css, app.js   Frontend: LEI watchlist manager (localStorage) + reports list
-api/reports.js                  Vercel serverless function entrypoint
+api/reports.js                  Vercel serverless function: GET /api/reports
+api/resolve.js                  Vercel serverless function: GET /api/resolve (ISIN -> LEI via GLEIF)
 lib/fetchReports.js             NSM search call + filtering logic (shared by api/ and server.js)
-server.js                       Plain Node dev server (static files + /api/reports)
+lib/resolveIsin.js              GLEIF ISIN->LEI resolution (shared by api/ and server.js)
+server.js                       Plain Node dev server (static files + /api/reports + /api/resolve)
 config/watchlist.js             Fallback LEI list, used only when /api/reports is called with no `leis` param
 ```
