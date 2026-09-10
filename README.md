@@ -51,88 +51,6 @@ to your watchlist, reporting per-ISIN failures (not found, GLEIF
 unreachable, etc.) rather than failing the whole batch. You can still add a
 company directly by LEI via the main form if you already know it.
 
-### Email notifications
-
-Each report in the list has a **Send Notification** button that emails a
-summary of that report (company, title, type, publish date, link) on click.
-It's manual/on-demand for now — nothing is sent automatically when a new
-report appears.
-
-Sending goes through standard SMTP via [nodemailer](https://nodemailer.com/)
-(`lib/sendNotification.js`, `/api/notify`) — a genuinely documented,
-well-established mechanism, unlike the NSM integration below. It's split
-into two halves with different requirements:
-
-- **Sending account (server-side, required):** `SMTP_HOST`, `SMTP_PORT`,
-  `SMTP_USER`, `SMTP_PASS`, `NOTIFY_EMAIL_FROM` — see `.env.example`. These
-  are secrets, so they're only ever set as environment variables on
-  whichever platform you deploy to (or your shell for local dev) — there's
-  no UI for them, and nothing is hardcoded or committed to the repo. If any
-  are missing, clicking the button shows an error naming which ones, rather
-  than silently failing.
-- **Recipient address (per-browser, no deployment step needed):** the first
-  time you click Send Notification (or via the "Notification email" panel
-  in the sidebar), an overlay asks for the email that should receive
-  notifications and saves it to that browser's `localStorage` — it's then
-  sent as `to` on every subsequent notify request from that browser. Setting
-  `NOTIFY_EMAIL_TO` server-side is optional and only used as a fallback for
-  a request that doesn't supply its own `to`.
-
-Note this means the sending account credentials are still a hard requirement
-regardless of the overlay — there is currently no way to configure those
-through the UI, since they're secrets that shouldn't live in browser storage
-or be resent with every request.
-
-**The sending account and the recipient don't need to be related.** If your
-recipient is an organisation mailbox that can't itself be used to send (e.g.
-your Microsoft 365 admin hasn't enabled SMTP AUTH for it — see below), send
-*through* a different account entirely and just set the recipient (via the
-overlay, or `NOTIFY_EMAIL_TO`) to your org address. The email still lands in
-your org inbox; only the outbound relay is a separate account.
-
-This hasn't been exercised against a real SMTP server from this environment
-(no network access here to verify it end-to-end) — the first real click
-after you configure credentials is effectively the integration test.
-
-#### Sending via SendGrid (recommended when your own mailbox can't send)
-
-`render.yaml` pre-fills `SMTP_HOST=smtp.sendgrid.net`, `SMTP_PORT=587`, and
-`SMTP_USER=apikey` (that's a literal fixed value SendGrid requires as the
-username, not a placeholder — the real secret is the API key, which goes in
-`SMTP_PASS`). Setup, one-time:
-
-1. Sign up at [sendgrid.com](https://sendgrid.com) — the free tier covers
-   100 emails/day, which is comfortably enough for a personal watchlist app.
-2. **Verify a sender identity**: Settings → Sender Authentication → Single
-   Sender Verification, and verify the address you want emails to appear
-   *from* (click the confirmation link SendGrid emails to it). SendGrid
-   refuses to send for an unverified `from` address, so this step is
-   mandatory, not optional — you can't skip straight to creating an API key.
-3. **Create an API key**: Settings → API Keys → Create API Key. Restricted
-   Access with just "Mail Send" permission is enough; you don't need Full
-   Access.
-4. On Render (dashboard → your service → Environment, after the Blueprint
-   deploys), set the two secrets it prompts for: `SMTP_PASS` = the API key
-   from step 3, `NOTIFY_EMAIL_FROM` = the verified address from step 2.
-5. In the app itself, set the recipient (Send Notification overlay, or the
-   "Notification email" sidebar panel) to your organisation email address —
-   that's independent of the SendGrid account and can be anything.
-
-#### Sending via a Microsoft 365 / Outlook (organisation) mailbox instead
-
-If you'd rather send *from* the org mailbox directly (not just receive into
-it), swap `render.yaml`'s `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER` to
-`smtp.office365.com` / `587` / your mailbox address, and know the most
-common blocker first: Microsoft disabled basic SMTP AUTH tenant-wide by
-default from late 2022 onward. If your organisation's admin hasn't
-explicitly re-enabled "Authenticated SMTP" for your mailbox, every send
-will fail with `535 5.7.139 Authentication unsuccessful` regardless of what
-credentials you use — no client-side fix exists, it's a tenant/mailbox
-setting only an Exchange admin can change. If your account also has MFA
-enforced, a normal password won't authenticate either; you'd need an app
-password, which itself requires per-user MFA and admin permission. This is
-exactly the scenario SendGrid above sidesteps entirely.
-
 ## Deploying (Vercel)
 
 This repo needs no build step — Vercel's zero-config Node setup serves the
@@ -276,10 +194,8 @@ index.html, style.css, app.js   Frontend: LEI watchlist manager (localStorage) +
 api/reports.js                  Vercel serverless function: GET /api/reports
 api/resolve.js                  Vercel serverless function: GET /api/resolve (ISIN -> LEI via GLEIF)
 api/watchlist.js                Vercel serverless function: GET /api/watchlist (seeds a fresh browser)
-api/notify.js                   Vercel serverless function: POST /api/notify (emails a report notification)
 lib/fetchReports.js             NSM search call + filtering logic (shared by api/ and server.js)
 lib/resolveIsin.js              GLEIF ISIN->LEI resolution (shared by api/ and server.js)
-lib/sendNotification.js         SMTP email sending via nodemailer (shared by api/ and server.js)
-server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist + /api/notify)
+server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist)
 config/watchlist.js             Default company list - seeds a fresh browser, and fallback for /api/reports called with no `leis` param
 ```

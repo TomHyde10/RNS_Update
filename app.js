@@ -1,68 +1,7 @@
 const STORAGE_KEY = 'rns-watchlist';
 const SETTINGS_KEY = 'rns-settings';
-const NOTIFY_EMAIL_KEY = 'rns-notify-email';
 const LEI_RE = /^[A-Z0-9]{20}$/;
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEFAULT_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report'];
-
-function getNotifyEmail() {
-  return (localStorage.getItem(NOTIFY_EMAIL_KEY) || '').trim();
-}
-
-function setNotifyEmail(email) {
-  localStorage.setItem(NOTIFY_EMAIL_KEY, email.trim());
-}
-
-function renderNotifyEmailDisplay() {
-  const el = document.getElementById('notify-email-display');
-  el.textContent = getNotifyEmail() || 'not set';
-}
-
-// Shows the "where should notifications go?" overlay. Resolves with the
-// saved email on Save, or null on Cancel - the caller decides what to do
-// with either outcome (e.g. proceed to send, or just leave settings as-is).
-function openNotifyEmailOverlay() {
-  return new Promise((resolve) => {
-    const overlay = document.getElementById('notify-email-overlay');
-    const form = document.getElementById('notify-email-form');
-    const input = document.getElementById('notify-email-input');
-    const errorEl = document.getElementById('notify-email-error');
-    const cancelBtn = document.getElementById('notify-email-cancel');
-
-    input.value = getNotifyEmail();
-    errorEl.hidden = true;
-    overlay.hidden = false;
-    input.focus();
-
-    function cleanup() {
-      overlay.hidden = true;
-      form.removeEventListener('submit', onSubmit);
-      cancelBtn.removeEventListener('click', onCancel);
-    }
-
-    function onSubmit(e) {
-      e.preventDefault();
-      const email = input.value.trim();
-      if (!EMAIL_RE.test(email)) {
-        errorEl.textContent = 'That doesn\'t look like a valid email address.';
-        errorEl.hidden = false;
-        return;
-      }
-      setNotifyEmail(email);
-      renderNotifyEmailDisplay();
-      cleanup();
-      resolve(email);
-    }
-
-    function onCancel() {
-      cleanup();
-      resolve(null);
-    }
-
-    form.addEventListener('submit', onSubmit);
-    cancelBtn.addEventListener('click', onCancel);
-  });
-}
 
 function loadWatchlist() {
   try {
@@ -249,40 +188,7 @@ async function loadReports() {
         <div class="report-company">${escapeHtml(company)}</div>
         <div class="report-title">${titleHtml}</div>
         <div class="report-meta">${escapeHtml(report.category || '')} · ${escapeHtml(date)}</div>
-        <div class="report-actions">
-          <button type="button" class="send-notification">Send Notification</button>
-          <span class="notify-status"></span>
-        </div>
       `;
-
-      li.querySelector('.send-notification').addEventListener('click', async (e) => {
-        const btn = e.currentTarget;
-        const statusSpan = li.querySelector('.notify-status');
-
-        let email = getNotifyEmail();
-        if (!email) {
-          email = await openNotifyEmailOverlay();
-          if (!email) return; // cancelled - leave the report row as-is
-        }
-
-        btn.disabled = true;
-        statusSpan.textContent = 'Sending…';
-
-        try {
-          const res = await fetch('/api/notify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...report, company, to: email }),
-          });
-          const result = await res.json();
-          statusSpan.textContent = result.ok ? 'Notification sent' : `Failed: ${result.error || res.status}`;
-        } catch (err) {
-          statusSpan.textContent = `Failed: ${err}`;
-        } finally {
-          btn.disabled = false;
-        }
-      });
-
       listEl.appendChild(li);
     }
 
@@ -388,14 +294,9 @@ function initSettingsForm() {
   });
 }
 
-document.getElementById('notify-email-change').addEventListener('click', () => {
-  openNotifyEmailOverlay();
-});
-
 (async () => {
   await initWatchlist();
   initSettingsForm();
   renderWatchlist();
-  renderNotifyEmailDisplay();
   loadReports();
 })();
