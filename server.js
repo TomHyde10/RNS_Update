@@ -6,6 +6,7 @@ const path = require('path');
 const { URL } = require('url');
 const { fetchReports } = require('./lib/fetchReports');
 const { resolveIsins } = require('./lib/resolveIsin');
+const watchlist = require('./config/watchlist');
 
 const PORT = process.env.PORT || 3000;
 
@@ -45,6 +46,12 @@ const server = http.createServer(async (req, res) => {
     const results = await resolveIsins(isins);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ results }));
+    return;
+  }
+
+  if (parsed.pathname === '/api/watchlist') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ companies: watchlist }));
     return;
   }
 

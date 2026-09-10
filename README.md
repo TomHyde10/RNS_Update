@@ -16,9 +16,15 @@ NSM search so the browser doesn't need to talk to it directly.
    npm start
    ```
    then open http://localhost:3000. No `.env` setup needed — see `.env.example`.
-2. Add companies to track using the **LEI** field at the top of the page (an
-   optional display name is stored alongside it). The list is kept in the
-   browser's `localStorage`, per browser/device.
+2. The page seeds itself with `config/watchlist.js`'s default companies the
+   first time it loads in a given browser (via `/api/watchlist` — see
+   `initWatchlist()` in `app.js`). From there, add more using the **LEI**
+   field at the top of the page (an optional display name is stored
+   alongside it), or the bulk ISIN box below it. The list lives in that
+   browser's `localStorage` from then on — editing `config/watchlist.js`
+   later only affects brand-new browsers that haven't loaded the page yet,
+   or a browser whose storage was cleared. Removing every company on
+   purpose is respected and won't silently reseed on the next visit.
 3. Under "Search settings", choose a **time period** (24 hours to 90 days)
    and the **report types** to match — a comma-separated list matched
    exactly against the filing's category (defaults to "Half-year Financial
@@ -27,10 +33,10 @@ NSM search so the browser doesn't need to talk to it directly.
    fall back to the default). These are also saved to `localStorage` and
    sent to `/api/reports` as `days` and `categories` query params.
 
-`config/watchlist.js` exists as a fallback: if `/api/reports` is called with
-no `leis` query parameter (e.g. hitting the API directly), it uses that
-file's list instead. The web UI always passes its own `leis`, so editing
-that file has no effect on the page.
+`config/watchlist.js` serves two roles: it's what `/api/watchlist` seeds a
+brand-new browser with (see above), and it's also the fallback `/api/reports`
+itself falls back to when called with no `leis` query parameter (e.g.
+hitting the API directly).
 
 ### Why LEI, not ISIN or ticker
 
@@ -172,8 +178,9 @@ Content-Type: application/json
 index.html, style.css, app.js   Frontend: LEI watchlist manager (localStorage) + reports list
 api/reports.js                  Vercel serverless function: GET /api/reports
 api/resolve.js                  Vercel serverless function: GET /api/resolve (ISIN -> LEI via GLEIF)
+api/watchlist.js                Vercel serverless function: GET /api/watchlist (seeds a fresh browser)
 lib/fetchReports.js             NSM search call + filtering logic (shared by api/ and server.js)
 lib/resolveIsin.js              GLEIF ISIN->LEI resolution (shared by api/ and server.js)
-server.js                       Plain Node dev server (static files + /api/reports + /api/resolve)
-config/watchlist.js             Fallback LEI list, used only when /api/reports is called with no `leis` param
+server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist)
+config/watchlist.js             Default company list - seeds a fresh browser, and fallback for /api/reports called with no `leis` param
 ```

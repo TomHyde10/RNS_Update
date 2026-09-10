@@ -25,6 +25,32 @@ function saveWatchlist(list) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
 }
 
+// Seeds a brand-new browser's watchlist from the server's default list
+// (config/watchlist.js, via /api/watchlist) the first time it's ever loaded
+// here. Distinguishes "never initialized" (localStorage key absent) from
+// "deliberately emptied" (key present but set to "[]") so removing every
+// company on purpose doesn't get silently undone on the next visit. If the
+// fetch fails, the key is left unset so the next page load retries rather
+// than permanently stranding a first-time visitor with nothing.
+async function initWatchlist() {
+  if (localStorage.getItem(STORAGE_KEY) !== null) return;
+
+  try {
+    const res = await fetch('/api/watchlist');
+    if (!res.ok) return;
+
+    const data = await res.json();
+    const companies = Array.isArray(data.companies) ? data.companies : [];
+    const cleaned = companies
+      .filter((c) => c && typeof c.lei === 'string' && LEI_RE.test(c.lei.toUpperCase()))
+      .map((c) => ({ lei: c.lei.toUpperCase(), name: (c.name || '').trim() }));
+
+    saveWatchlist(cleaned);
+  } catch {
+    // Leave uninitialized - retried on the next page load.
+  }
+}
+
 function loadSettings() {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
@@ -260,7 +286,9 @@ function initSettingsForm() {
   });
 }
 
-initSettingsForm();
-
-renderWatchlist();
-loadReports();
+(async () => {
+  await initWatchlist();
+  initSettingsForm();
+  renderWatchlist();
+  loadReports();
+})();
