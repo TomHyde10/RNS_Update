@@ -87,6 +87,37 @@ This hasn't been exercised against a real SMTP server from this environment
 (no network access here to verify it end-to-end) — the first real click
 after you configure credentials is effectively the integration test.
 
+#### Sending via a Microsoft 365 / Outlook (organisation) mailbox
+
+`render.yaml` already pre-fills `SMTP_HOST=smtp.office365.com` and
+`SMTP_PORT=587` for this case — on Render you only need to set `SMTP_USER`,
+`SMTP_PASS`, and `NOTIFY_EMAIL_FROM` (Render dashboard → your service →
+Environment) after the Blueprint deploys, since those three are marked
+`sync: false` and deliberately not stored in the repo. `SMTP_USER` and
+`NOTIFY_EMAIL_FROM` are normally the same mailbox address; `SMTP_PASS` is
+that mailbox's password (or an app password — see below).
+
+**Before spending time on this, know the most common blocker:** Microsoft
+disabled basic SMTP AUTH tenant-wide by default from late 2022 onward. If
+your organisation's admin hasn't explicitly re-enabled "Authenticated SMTP"
+for your mailbox, every send will fail with `535 5.7.139 Authentication
+unsuccessful` regardless of what's in these env vars — no client-side fix
+exists for this, it's a tenant/mailbox setting only an Exchange admin can
+change (`Set-CASMailbox -Identity <you> -SmtpClientAuthenticationDisabled
+$false`, and confirming SMTP AUTH isn't blocked at the tenant level in the
+Exchange admin center). Ask your IT/Exchange admin to check this first if
+sending fails.
+
+If your account also has MFA enforced, a normal password won't authenticate
+either — you'd need an **app password** instead, which itself requires
+per-user MFA (not just Security Defaults/Conditional Access MFA) to be
+enabled and app passwords allowed by the tenant. In many organisations, IT
+policy blocks both SMTP AUTH and app passwords entirely, in which case a
+personal mailbox (e.g. Gmail with an app password) or a transactional email
+service (SendGrid, Mailgun — both have free tiers) is the practical
+alternative; only the `SMTP_HOST`/`SMTP_PORT` values in `render.yaml` would
+need to change.
+
 ## Deploying (Vercel)
 
 This repo needs no build step — Vercel's zero-config Node setup serves the

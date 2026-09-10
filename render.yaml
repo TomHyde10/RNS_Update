@@ -5,3 +5,21 @@ services:
     plan: free
     buildCommand: npm install
     startCommand: npm start
+    envVars:
+      # Fixed values for Microsoft 365 / Outlook SMTP - filled in already so
+      # you only need to set the three secrets below in the Render
+      # dashboard. Change these if you're not sending via an Office 365
+      # mailbox.
+      - key: SMTP_HOST
+        value: smtp.office365.com
+      - key: SMTP_PORT
+        value: "587"
+      # sync: false means Render will prompt for these in the dashboard
+      # instead of reading a value from this file - so the real mailbox
+      # address/password are never committed to the repo.
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: NOTIFY_EMAIL_FROM
+        sync: false
