@@ -45,9 +45,11 @@ body {
   background: var(--bg);
   color: var(--fg);
   margin: 0;
+  /* Fills the viewport rather than capping out at a fixed width - side
+     padding is the only gutter, so it scales down gracefully on narrow
+     screens (see the .layout breakpoint below) and uses the full width on
+     wide monitors instead of leaving large empty margins either side. */
   padding: 1.5rem;
-  max-width: 1200px;
-  margin-inline: auto;
 }
 
 header { margin-bottom: 1.25rem; }
