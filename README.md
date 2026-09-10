@@ -123,6 +123,51 @@ Render dashboard, **New → Blueprint**, point it at this repo. It builds with
 Without the blueprint, the same result comes from **New → Web Service** →
 connect the repo → Build Command `npm install`, Start Command `npm start`.
 
+## Deploying (Northflank)
+
+`server.js` is the same plain persistent Node server used for Render above,
+so it works the same way here: no serverless function support needed,
+`api/*.js` is ignored, `server.js` alone serves the whole app.
+
+1. **New → Service → Combined service**, connect this GitHub repo.
+2. **Build**: Northflank tries a **Buildpack** first, which should
+   auto-detect this as a standard Node app with no extra config — build
+   command `npm install`, start command `npm start` if it asks. If
+   buildpack detection has trouble (Northflank's own docs list a Dockerfile
+   as the documented fallback), this repo also has a working `Dockerfile`
+   — choose **Dockerfile** as the build type instead and it picks that up.
+3. **Ports — the one genuinely different step from Render.** Northflank
+   does **not** auto-inject a `PORT` env var the way Render does; you set
+   it yourself (or rely on `server.js`'s own default). Either:
+   - leave `PORT` unset and add a port in the service's **Ports & DNS**
+     settings for **3000**, protocol HTTP, public; or
+   - set `PORT` to whatever value you prefer and match that same number in
+     **Ports & DNS**.
+   Skipping this step is the most likely way a first deploy here goes
+   "build succeeded, site unreachable" — the container runs, nothing routes
+   to it.
+4. No environment variables are required for the base app either way.
+
+### Optional: Postgres addon for the persistent cache
+
+If you also want the Postgres-backed NSM cache (see "Persistent cache
+(Postgres)" above) rather than Render's approach of provisioning one
+separately and copying a connection string by hand, Northflank's own
+Postgres addon is more directly integrated: **Addons → PostgreSQL**, then
+link its generated `DATABASE_URL` secret to the service as an environment
+variable. Northflank's addon already names it `DATABASE_URL` in exactly
+the `postgresql://user:pass@host:5432/dbname` shape `lib/cacheStore.js`
+expects — no reformatting needed, unlike copying Render's connection
+string by hand.
+
+**This wasn't build-tested in this environment** — the sandbox this was
+written in blocks Docker Hub registry pulls (even through its own network
+proxy), so the `Dockerfile` above couldn't actually be built and run here.
+It follows the standard, widely-used Node Docker pattern (and matches
+Northflank's own documented example closely), but the same "first real
+deploy is the real test" caveat applies as everywhere else undocumented or
+unverifiable from this sandbox has come up in this project.
+
 ## API integration notes
 
 ### GLEIF (ISIN → LEI resolution)
@@ -298,4 +343,5 @@ lib/resolveIsin.js              GLEIF ISIN->LEI resolution (shared by api/ and s
 lib/buildFeed.js                Builds the RSS 2.0 XML for /api/feed (shared by api/ and server.js)
 server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist + /api/feed)
 config/watchlist.js             Default company list - seeds a fresh browser, and fallback for /api/reports called with no `leis` param
+Dockerfile, .dockerignore       Fallback build path for Northflank (or anywhere else that wants a container) - see "Deploying (Northflank)"
 ```
