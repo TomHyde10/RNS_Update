@@ -194,6 +194,16 @@ Render dashboard, **New → Blueprint**, point it at this repo. It builds with
 Without the blueprint, the same result comes from **New → Web Service** →
 connect the repo → Build Command `npm install`, Start Command `npm start`.
 
+## Deploying as a Power Automate flow (no hosting needed)
+
+If you'd rather not deploy this app anywhere at all, [`docs/power-automate-flow.md`](docs/power-automate-flow.md)
+is a step-by-step build guide for a Power Automate cloud flow that
+re-implements the NSM search + filtering directly as flow actions
+(Recurrence trigger → HTTP → Parse JSON → filter → Outlook email), using
+the exact request shape verified below. Requires a Power Automate
+Premium/Process license for the generic `HTTP` action — see that doc for
+details before you start building.
+
 ## API integration notes
 
 ### GLEIF (ISIN → LEI resolution)
@@ -339,4 +349,5 @@ lib/extractDocumentText.js      Fetches a report's PDF/HTML document and extract
 lib/summarise.js                Calls the Claude API (@anthropic-ai/sdk) to summarise extracted text (shared by api/ and server.js)
 server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist + /api/feed + /api/summarise)
 config/watchlist.js             Default company list - seeds a fresh browser, and fallback for /api/reports called with no `leis` param
+docs/power-automate-flow.md     Build guide for a Power Automate flow that re-implements the NSM search natively (no app hosting needed)
 ```
