@@ -9,7 +9,7 @@
 <body>
   <header>
     <h1>RNS Update</h1>
-    <p>Half-year and annual reports from the last week, for the companies below — sourced directly from the FCA's National Storage Mechanism, no API key required.</p>
+    <p>Company report disclosures for the time period and types below — sourced directly from the FCA's National Storage Mechanism, no API key required.</p>
   </header>
 
   <main>
@@ -24,6 +24,30 @@
       <ul id="company-list"></ul>
     </section>
 
+    <section id="settings-manager">
+      <h2>Search settings</h2>
+      <form id="settings-form">
+        <label>
+          Time period
+          <select id="days-select">
+            <option value="1">Last 24 hours</option>
+            <option value="7">Last 7 days</option>
+            <option value="14">Last 14 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+        </label>
+        <label>
+          Report types (comma-separated, matched exactly against the filing category)
+          <input id="categories-input" type="text" autocomplete="off" />
+        </label>
+        <div class="settings-buttons">
+          <button type="submit">Apply</button>
+          <button type="button" id="categories-reset">Reset types to default</button>
+        </div>
+      </form>
+    </section>
+
     <div id="reports-header">
       <p id="status">Loading…</p>
       <button id="refresh">Refresh</button>
@@ -31,7 +55,7 @@
     <ul id="reports"></ul>
 
     <details>
-      <summary>All items returned this week (matched or not) — for diagnosing a missing report</summary>
+      <summary>All items returned in this period (matched or not) — for diagnosing a missing report</summary>
       <pre id="debug"></pre>
     </details>
   </main>

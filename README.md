@@ -1,10 +1,10 @@
 # RNS Update
 
-A lightweight site that shows **half-year and annual report** disclosures
-from the last 7 days, for a list of companies you manage yourself in the
-page — sourced directly from the FCA's **National Storage Mechanism**
-(data.fca.org.uk), the UK regulator's public repository for company
-disclosures. No API key, no account, no cost.
+A lightweight site that shows company report disclosures for a time period
+and set of report types you choose, for a list of companies you manage
+yourself in the page — sourced directly from the FCA's **National Storage
+Mechanism** (data.fca.org.uk), the UK regulator's public repository for
+company disclosures. No API key, no account, no cost.
 
 Static HTML/CSS/JS frontend + a small serverless function that proxies the
 NSM search so the browser doesn't need to talk to it directly.
@@ -19,6 +19,13 @@ NSM search so the browser doesn't need to talk to it directly.
 2. Add companies to track using the **LEI** field at the top of the page (an
    optional display name is stored alongside it). The list is kept in the
    browser's `localStorage`, per browser/device.
+3. Under "Search settings", choose a **time period** (24 hours to 90 days)
+   and the **report types** to match — a comma-separated list matched
+   exactly against the filing's category (defaults to "Half-year Financial
+   Report, Annual Financial Report"; try adding e.g. `Net Asset Value(s)` or
+   `Dividend Declaration` to widen it, or clear the field and hit Apply to
+   fall back to the default). These are also saved to `localStorage` and
+   sent to `/api/reports` as `days` and `categories` query params.
 
 `config/watchlist.js` exists as a fallback: if `/api/reports` is called with
 no `leis` query parameter (e.g. hitting the API directly), it uses that
@@ -117,14 +124,24 @@ Content-Type: application/json
   server-side as informal bot filtering — unconfirmed either way, since it
   can't be tested from a sandboxed environment with no network access to
   `data.fca.org.uk`.
-- No pagination: `size: 100` per company per week. Fine for a normal
-  company's weekly filing volume (the real capture showed roughly 10-15
-  items/week for one company), but a company with unusually heavy filing
-  activity in a week could exceed it and silently miss older items in that
-  window.
-- The debug panel ("All items returned this week") shows every item for
-  every watched company, un-truncated — safe to leave on since it's no
-  longer a market-wide dump like the old Ticker version could produce.
+- No pagination: `size` per company scales with the chosen time period
+  (`resultsPerCompany()` in `lib/fetchReports.js`, ~15 items/day of
+  headroom, capped at 1000). Fine for a normal company's filing volume (the
+  real capture showed roughly 10-15 items/week for one company), but a
+  company with unusually heavy filing activity in the selected window could
+  still exceed it and silently miss older items.
+- The debug panel ("All items returned in this period") shows every item
+  for every watched company, un-truncated — safe to leave on since it's no
+  longer a market-wide dump like the old Ticker version could produce, but
+  a long time period with many watched companies could make it sizeable.
+- **Report-type matching is exact and case-insensitive**, not a substring
+  match — typing `Half-year` alone won't match `"Half-year Financial
+  Report"`. Type (or paste) the full category name as it appears in a real
+  filing.
+- A stale browser `localStorage` entry from before the ISIN→LEI switch (an
+  `isin` field instead of `lei`) is silently dropped on load rather than
+  migrated, since there's no way to derive an LEI from an old ISIN entry
+  automatically — see `loadWatchlist()` in `app.js`.
 
 ## Project layout
 

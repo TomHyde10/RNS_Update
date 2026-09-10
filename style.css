@@ -98,6 +98,38 @@ button:hover { border-color: var(--accent); }
   font-size: 1rem;
 }
 
+#settings-manager { margin-bottom: 1.5rem; }
+#settings-manager h2 { font-size: 1rem; margin-bottom: 0.5rem; }
+
+#settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+#settings-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+#settings-form select,
+#settings-form input {
+  font: inherit;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+}
+
+.settings-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
 #reports-header {
   display: flex;
   align-items: center;
