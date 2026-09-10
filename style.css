@@ -333,6 +333,15 @@ button:hover { border-color: var(--accent); }
   gap: 1rem;
 }
 
+.overlay-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+}
+
+.overlay-header-actions button { font-size: 0.8rem; }
+
 .overlay-card h2 { margin: 0 0 0.5rem; font-size: 1.05rem; }
 .overlay-header h2 { margin: 0; }
 

@@ -1,13 +1,28 @@
 const STORAGE_KEY = 'rns-watchlist';
 const SETTINGS_KEY = 'rns-settings';
 const SEEN_KEY = 'rns-seen-reports';
+const HISTORY_CACHE_KEY = 'rns-history-cache';
 const LEI_RE = /^[A-Z0-9]{20}$/;
 const DEFAULT_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report'];
 const KNOWN_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report', 'Net Asset Value(s)', 'Dividend Declaration'];
 const MAX_SEEN = 1000;
+// Same TTL philosophy as the server's NSM cache (NSM_CACHE_TTL_MINUTES) but
+// entirely client-side: re-opening the same company's history within this
+// window reuses what's already in localStorage instead of hitting
+// /api/reports (and, on a cache miss server-side, the NSM API behind it)
+// again. Independent of the server cache - this is about avoiding the round
+// trip from the browser at all, not just avoiding the upstream NSM call.
+const HISTORY_CACHE_TTL_MINUTES = 10;
+const HISTORY_CACHE_TTL_MS = HISTORY_CACHE_TTL_MINUTES * 60 * 1000;
+// Entries older than this are dropped on save even if never re-requested,
+// so removing a company from your watchlist doesn't leave its history
+// cached in localStorage forever.
+const HISTORY_CACHE_PRUNE_MS = 24 * 60 * 60 * 1000;
 
 let lastReports = [];
 let autoRefreshTimer = null;
+let currentHistoryLei = null;
+let currentHistoryName = null;
 
 function loadWatchlist() {
   try {
@@ -108,6 +123,28 @@ function saveSeen(set) {
   // recently seen entries.
   const arr = [...set].slice(-MAX_SEEN);
   localStorage.setItem(SEEN_KEY, JSON.stringify(arr));
+}
+
+// Per-company filing history cache, keyed by LEI: { [lei]: { items,
+// fetchedAt } }. Reused by openHistoryOverlay() to avoid re-fetching
+// /api/reports every time the same company's history is opened.
+function loadHistoryCache() {
+  try {
+    const raw = localStorage.getItem(HISTORY_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveHistoryCache(cache) {
+  const now = Date.now();
+  const pruned = {};
+  for (const [lei, entry] of Object.entries(cache)) {
+    if (entry && now - entry.fetchedAt < HISTORY_CACHE_PRUNE_MS) pruned[lei] = entry;
+  }
+  localStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify(pruned));
 }
 
 function escapeHtml(str) {
@@ -316,16 +353,54 @@ async function loadReports() {
   }
 }
 
-async function openHistoryOverlay(lei, displayName) {
+function renderHistoryItems(items, statusSuffix) {
+  const listEl = document.getElementById('history-list');
+  const statusEl = document.getElementById('history-status');
+
+  statusEl.textContent = (items.length
+    ? `${items.length} filing(s) in the last 365 days.`
+    : 'No filings found in the last 365 days.') + statusSuffix;
+
+  listEl.innerHTML = '';
+  for (const item of items) {
+    const li = document.createElement('li');
+    const date = item.publishedAt ? new Date(item.publishedAt).toLocaleDateString() : 'Unknown date';
+    const typeHtml = item.url
+      ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.type || 'Unknown type')}</a>`
+      : escapeHtml(item.type || 'Unknown type');
+    li.innerHTML = `
+      <span class="history-date">${escapeHtml(date)}</span> ·
+      <span class="history-type">${typeHtml}</span><br>
+      <span class="history-headline">${escapeHtml(item.headline || '')}</span>
+    `;
+    listEl.appendChild(li);
+  }
+}
+
+async function openHistoryOverlay(lei, displayName, { force = false } = {}) {
+  currentHistoryLei = lei;
+  currentHistoryName = displayName;
+
   const overlay = document.getElementById('history-overlay');
   const titleEl = document.getElementById('history-title');
   const listEl = document.getElementById('history-list');
   const statusEl = document.getElementById('history-status');
 
   titleEl.textContent = `Filing history: ${displayName}`;
+  overlay.hidden = false;
+
+  const cache = loadHistoryCache();
+  const cached = cache[lei];
+  const now = Date.now();
+
+  if (!force && cached && now - cached.fetchedAt < HISTORY_CACHE_TTL_MS) {
+    const cachedAt = new Date(cached.fetchedAt).toLocaleTimeString();
+    renderHistoryItems(cached.items, ` (cached, loaded at ${cachedAt} — hit Refresh for the latest)`);
+    return;
+  }
+
   listEl.innerHTML = '';
   statusEl.textContent = 'Loading…';
-  overlay.hidden = false;
 
   try {
     const params = new URLSearchParams({ leis: lei, days: '365' });
@@ -338,23 +413,11 @@ async function openHistoryOverlay(lei, displayName) {
     }
 
     const items = (data.scannedItems || []).slice().sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
-    statusEl.textContent = items.length
-      ? `${items.length} filing(s) in the last 365 days.`
-      : 'No filings found in the last 365 days.';
 
-    for (const item of items) {
-      const li = document.createElement('li');
-      const date = item.publishedAt ? new Date(item.publishedAt).toLocaleDateString() : 'Unknown date';
-      const typeHtml = item.url
-        ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.type || 'Unknown type')}</a>`
-        : escapeHtml(item.type || 'Unknown type');
-      li.innerHTML = `
-        <span class="history-date">${escapeHtml(date)}</span> ·
-        <span class="history-type">${typeHtml}</span><br>
-        <span class="history-headline">${escapeHtml(item.headline || '')}</span>
-      `;
-      listEl.appendChild(li);
-    }
+    cache[lei] = { items, fetchedAt: now };
+    saveHistoryCache(cache);
+
+    renderHistoryItems(items, '');
   } catch (err) {
     statusEl.textContent = `Failed to load: ${err}`;
   }
@@ -362,6 +425,10 @@ async function openHistoryOverlay(lei, displayName) {
 
 document.getElementById('history-close').addEventListener('click', () => {
   document.getElementById('history-overlay').hidden = true;
+});
+
+document.getElementById('history-refresh').addEventListener('click', () => {
+  if (currentHistoryLei) openHistoryOverlay(currentHistoryLei, currentHistoryName, { force: true });
 });
 
 document.getElementById('add-company-form').addEventListener('submit', (e) => {

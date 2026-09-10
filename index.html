@@ -101,7 +101,10 @@
     <div class="overlay-card overlay-card-wide" role="dialog" aria-modal="true" aria-labelledby="history-title">
       <div class="overlay-header">
         <h2 id="history-title">Filing history</h2>
-        <button type="button" id="history-close" class="overlay-close" aria-label="Close">&times;</button>
+        <div class="overlay-header-actions">
+          <button type="button" id="history-refresh" title="Bypass the cache and re-fetch">Refresh</button>
+          <button type="button" id="history-close" class="overlay-close" aria-label="Close">&times;</button>
+        </div>
       </div>
       <p id="history-status" class="hint"></p>
       <ul id="history-list" class="history-list"></ul>
