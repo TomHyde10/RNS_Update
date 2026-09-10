@@ -72,11 +72,6 @@ hitting the API directly).
   or title client-side (no re-fetch), and a sort dropdown reorders by date
   or company name (persisted in `localStorage`). Both act purely on
   `lastReports`, the same in-memory list the CSV export reads from.
-- **Mark reviewed**: a per-report "Mark reviewed" toggle, tracked separately
-  from the automatic NEW badge (`REVIEWED_KEY` in `app.js`) — NEW answers
-  "has this appeared since I last looked", reviewed answers "have I actually
-  dealt with this one", and only changes when you click it. Pair it with the
-  "Hide reviewed" checkbox to shrink the list down to what's left to do.
 - **Manual theme toggle**: Auto/Light/Dark in the header, persisted in
   `localStorage` and applied via a `data-theme` attribute that overrides the
   `prefers-color-scheme` media query the app otherwise follows.

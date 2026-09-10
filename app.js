@@ -1,7 +1,6 @@
 const STORAGE_KEY = 'rns-watchlist';
 const SETTINGS_KEY = 'rns-settings';
 const SEEN_KEY = 'rns-seen-reports';
-const REVIEWED_KEY = 'rns-reviewed-reports';
 const HISTORY_CACHE_KEY = 'rns-history-cache';
 const SORT_KEY = 'rns-sort';
 const THEME_KEY = 'rns-theme';
@@ -9,7 +8,6 @@ const LEI_RE = /^[A-Z0-9]{20}$/;
 const DEFAULT_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report'];
 const KNOWN_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report', 'Net Asset Value(s)', 'Dividend Declaration'];
 const MAX_SEEN = 1000;
-const MAX_REVIEWED = 1000;
 const SORT_OPTIONS = ['date-desc', 'date-asc', 'company-asc', 'company-desc'];
 const THEME_OPTIONS = ['auto', 'light', 'dark'];
 // Same TTL philosophy as the server's NSM cache (NSM_CACHE_TTL_MINUTES) but
@@ -130,25 +128,6 @@ function saveSeen(set) {
   // recently seen entries.
   const arr = [...set].slice(-MAX_SEEN);
   localStorage.setItem(SEEN_KEY, JSON.stringify(arr));
-}
-
-// Manually-marked "reviewed" reports - distinct from the automatic seen/new
-// tracking above. Seen/new answers "has this appeared since I last looked";
-// reviewed answers "have I actually dealt with this one", and only changes
-// when you click the button, not just by loading the page.
-function loadReviewed() {
-  try {
-    const raw = localStorage.getItem(REVIEWED_KEY);
-    const arr = raw ? JSON.parse(raw) : [];
-    return new Set(Array.isArray(arr) ? arr : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function saveReviewed(set) {
-  const arr = [...set].slice(-MAX_REVIEWED);
-  localStorage.setItem(REVIEWED_KEY, JSON.stringify(arr));
 }
 
 function loadSort() {
@@ -395,7 +374,6 @@ function renderReportsList() {
   const listEl = document.getElementById('reports');
   const filterInput = document.getElementById('report-filter');
   const sortSelect = document.getElementById('sort-select');
-  const hideReviewedCheckbox = document.getElementById('hide-reviewed');
 
   if (lastReports.length === 0) {
     listEl.innerHTML = '<li class="empty">No matching reports in the selected time period.</li>';
@@ -403,12 +381,10 @@ function renderReportsList() {
   }
 
   const filterText = filterInput.value.trim().toLowerCase();
-  const reviewed = loadReviewed();
 
   let visible = lastReports.filter(
     (r) => !filterText || r.company.toLowerCase().includes(filterText) || r.title.toLowerCase().includes(filterText)
   );
-  if (hideReviewedCheckbox.checked) visible = visible.filter((r) => !reviewed.has(reportKey(r)));
   visible = sortReports(visible, sortSelect.value);
 
   listEl.innerHTML = '';
@@ -420,9 +396,8 @@ function renderReportsList() {
   for (const report of visible) {
     const key = reportKey(report);
     const isNew = lastNewKeys.has(key);
-    const isReviewed = reviewed.has(key);
     const li = document.createElement('li');
-    li.className = ['report', isNew ? 'report-new' : '', isReviewed ? 'report-reviewed' : ''].filter(Boolean).join(' ');
+    li.className = isNew ? 'report report-new' : 'report';
     const date = report.publishedAt ? new Date(report.publishedAt).toLocaleString() : 'Unknown date';
     const titleHtml = report.url
       ? `<a href="${escapeHtml(report.url)}" target="_blank" rel="noopener">${escapeHtml(report.title)}</a>`
@@ -432,22 +407,9 @@ function renderReportsList() {
       <div class="report-company">${escapeHtml(report.company)}${isNew ? '<span class="new-badge">NEW</span>' : ''}</div>
       <div class="report-title">${titleHtml}</div>
       <div class="report-meta">${escapeHtml(report.category || '')} · ${escapeHtml(date)}</div>
-      <div class="report-actions">
-        <button type="button" class="review-toggle" data-key="${escapeHtml(key)}">${isReviewed ? '✓ Reviewed' : 'Mark reviewed'}</button>
-      </div>
     `;
     listEl.appendChild(li);
   }
-
-  listEl.querySelectorAll('.review-toggle').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const set = loadReviewed();
-      if (set.has(btn.dataset.key)) set.delete(btn.dataset.key);
-      else set.add(btn.dataset.key);
-      saveReviewed(set);
-      renderReportsList();
-    });
-  });
 }
 
 // Merges companies/settings carried in the URL's query string (see
@@ -676,7 +638,6 @@ document.getElementById('watchlist-import-file').addEventListener('change', (e) 
 });
 
 document.getElementById('report-filter').addEventListener('input', renderReportsList);
-document.getElementById('hide-reviewed').addEventListener('change', renderReportsList);
 document.getElementById('sort-select').addEventListener('change', () => {
   saveSort(document.getElementById('sort-select').value);
   renderReportsList();
