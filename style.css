@@ -44,6 +44,67 @@ button {
 
 button:hover { border-color: var(--accent); }
 
+#watchlist-manager { margin-bottom: 1.5rem; }
+#watchlist-manager h2 { font-size: 1rem; margin-bottom: 0.5rem; }
+
+#add-company-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+#add-company-form input {
+  font: inherit;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+}
+
+#isin-input { flex: 1 1 12rem; }
+#name-input { flex: 1 1 12rem; }
+
+.error { color: #d64545; font-size: 0.85rem; margin: 0.5rem 0 0; }
+
+#company-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.company-tag {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.25rem 0.4rem 0.25rem 0.75rem;
+  font-size: 0.85rem;
+}
+
+.company-tag .isin { color: var(--muted); font-size: 0.8rem; }
+
+.remove-company {
+  border: none;
+  border-radius: 50%;
+  width: 1.4rem;
+  height: 1.4rem;
+  line-height: 1;
+  padding: 0;
+  font-size: 1rem;
+}
+
+#reports-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
 #status { color: var(--muted); }
 
 #reports {

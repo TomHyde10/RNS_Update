@@ -1,8 +1,8 @@
 # RNS Update
 
-A lightweight site that shows recent **financial report** RNS disclosures
-(annual reports, final/interim results, etc.) for a watchlist of companies,
-using the [Ticker API](https://developers.ticker.app/docs).
+A lightweight site that shows **half-year and annual report** RNS
+disclosures from the last 7 days, for a list of companies you manage
+yourself in the page, using the [Ticker API](https://developers.ticker.app/docs).
 
 Static HTML/CSS/JS frontend + a small serverless function that calls Ticker
 server-side, so the API key never reaches the browser.
@@ -10,12 +10,20 @@ server-side, so the API key never reaches the browser.
 ## Setup
 
 1. `cp .env.example .env` and set `TICKER_API_KEY` to your real key.
-2. Edit `config/watchlist.js` to list the companies to track (ISIN + display name).
-3. Run locally:
+2. Run locally:
    ```
    npm start
    ```
    then open http://localhost:3000.
+3. Add companies to track using the ISIN field at the top of the page (an
+   optional display name is stored alongside it). The list is kept in the
+   browser's `localStorage`, per browser/device — there's no server-side
+   watchlist to edit anymore.
+
+`config/watchlist.js` still exists as a fallback: if `/api/reports` is
+called with no `isins` query parameter (e.g. hitting the API directly), it
+uses that file's list instead. The web UI always passes its own `isins`, so
+editing that file has no effect on the page.
 
 ## Deploying (Vercel)
 
@@ -55,16 +63,21 @@ Ticker API reference (https://developers.ticker.app/api-reference), not
 guessed:
 
 ```
-GET https://api.tickerapp.net/v2/disclosures/sources/rns/items?isins=<isin1,isin2>&pageSize=<n>
+GET https://api.tickerapp.net/v2/disclosures/sources/rns/items?isins=<isin1,isin2>&pageSize=<n>&dateFrom=<yyyy-mm-dd>
 x-api-key: <your key>
 ```
 
-- The watchlist's ISINs are passed server-side via the `isins` query
-  parameter, so Ticker does the filtering — the app no longer pulls a large
-  page and filters client-side.
+- ISINs from the page's `localStorage`-backed list are passed straight
+  through via the `isins` query parameter, so Ticker does the filtering —
+  the app never pulls a large page and filters client-side.
+- `dateFrom` defaults to 7 days before the request (`defaultDateFrom()` in
+  `lib/fetchReports.js`), so only the last week of disclosures is fetched.
 - Item fields are read from the confirmed response shape: `headline`,
   `timestamp`, `issuer.name`, `issuer.instrument.isin`,
   `issuer.instrument.symbol.mnemonic`, and `category[].name`.
+- Results are further filtered to half-year/annual reports only
+  (`REPORT_KEYWORDS` in `lib/fetchReports.js`), matched against the headline
+  and category name — see the caveat below.
 - A `429` is reported distinctly (it can be either the per-second throttle
   or the weekly quota); one retry with backoff is attempted if the response
   carries a `Retry-After` header, otherwise the error is surfaced
@@ -78,8 +91,8 @@ x-api-key: <your key>
   `documentUrlOf()` in `lib/fetchReports.js` defensively tries
   `url`/`link`/`href`/`documentUrl`. Check the "Raw JSON" debug panel on the
   page and fix this lookup if the guess is wrong.
-- **"Financial report" filtering** still matches on headline/category-name
-  keywords (`FINANCIAL_REPORT_KEYWORDS` in `lib/fetchReports.js`) rather than
+- **Half-year/annual report filtering** still matches on headline/category-name
+  keywords (`REPORT_KEYWORDS` in `lib/fetchReports.js`) rather than
   the `fcaCategory`/`tickerCategory` codes, since the code-to-meaning mapping
   (e.g. which of `AA, BC, CS, CU, DD, DI, HO, ME, RE, TU, XX` means
   "results") isn't in the reference excerpt available. If you confirm the
@@ -92,9 +105,9 @@ x-api-key: <your key>
 ## Project layout
 
 ```
-index.html, style.css, app.js   Frontend (served as-is, no build step)
+index.html, style.css, app.js   Frontend: ISIN watchlist manager (localStorage) + reports list
 api/reports.js                  Vercel serverless function entrypoint
 lib/fetchReports.js             Ticker API call + filtering logic (shared by api/ and server.js)
 server.js                       Plain Node dev server (static files + /api/reports)
-config/watchlist.js             Companies to track (ISIN + name)
+config/watchlist.js             Fallback ISIN list, used only when /api/reports is called with no `isins` param
 ```

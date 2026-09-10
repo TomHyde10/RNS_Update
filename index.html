@@ -9,12 +9,25 @@
 <body>
   <header>
     <h1>RNS Update</h1>
-    <p>Financial reports from tracked companies, via the Ticker API.</p>
-    <button id="refresh">Refresh</button>
+    <p>Half-year and annual reports from the last week, for the companies below.</p>
   </header>
 
   <main>
-    <p id="status">Loading…</p>
+    <section id="watchlist-manager">
+      <h2>Companies</h2>
+      <form id="add-company-form">
+        <input id="isin-input" type="text" placeholder="ISIN e.g. GB00BK1PKQ95" maxlength="12" autocomplete="off" required />
+        <input id="name-input" type="text" placeholder="Display name (optional)" autocomplete="off" />
+        <button type="submit">Add</button>
+      </form>
+      <p id="isin-error" class="error" hidden></p>
+      <ul id="company-list"></ul>
+    </section>
+
+    <div id="reports-header">
+      <p id="status">Loading…</p>
+      <button id="refresh">Refresh</button>
+    </div>
     <ul id="reports"></ul>
 
     <details>
