@@ -138,6 +138,22 @@ Content-Type: application/json
 - No API key, and no documented rate limit — meaning also no documented
   *allowance*. Keep usage light (this app already does, at one request per
   company per refresh) and don't assume it can take sustained/bulk traffic.
+- **Each company's raw results are cached in memory** for `NSM_CACHE_TTL_MINUTES`
+  (default 10, `fetchForLeiCached()` in `lib/fetchReports.js`) — a refresh
+  within that window reuses the cached data instead of re-querying NSM, so
+  with a 21-company watchlist a burst of refreshes costs 21 requests once,
+  not 21 every time. Keyed only by LEI, not by the requested time
+  period/report types, since those are both filtered afterwards against the
+  same raw item list; a request needing a longer window than what's cached
+  (a bigger `size`) is treated as a miss and re-fetched. This only helps on
+  a persistent process (Render, local dev) — Vercel's serverless functions
+  don't guarantee memory survives between invocations, so the cache is
+  largely ineffective there. Set `NSM_CACHE_TTL_MINUTES=0` to disable it.
+- **Batching multiple LEIs into a single request is untested.** The
+  `company_lei` value array has only ever been sent/confirmed with one LEI;
+  whether NSM's search accepts several at once (which would cut the
+  21-request refresh down to 1-3) is unconfirmed and not relied on, per the
+  same "verify before building" approach used throughout this integration.
 - A handful of filings come through a different shape (seen once: a "Direct
   Upload" PDF factsheet with `ContentVersionId`/`html_link` fields instead
   of the usual RNS/PRN shape). `normalise()` handles this by only relying on
