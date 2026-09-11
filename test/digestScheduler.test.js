@@ -3,7 +3,7 @@
 // fake sender instead of real Postgres/Resend/timers.
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { isDue, runDueDigests } = require('../lib/digestScheduler');
+const { isDue, runDueDigests, computePollIntervalMinutes, PREP_BUFFER_MINUTES, MIN_POLL_INTERVAL_MINUTES, DEFAULT_POLL_INTERVAL_MINUTES } = require('../lib/digestScheduler');
 
 describe('isDue', () => {
   it('is never due when paused (frequencyMinutes 0), even if never sent', () => {
@@ -30,6 +30,37 @@ describe('isDue', () => {
     const now = Date.now();
     const lastSentAt = new Date(now - 60 * 60 * 1000).toISOString(); // exactly 60 min ago
     assert.equal(isDue({ frequencyMinutes: 60, lastSentAt }, now), true);
+  });
+});
+
+describe('computePollIntervalMinutes', () => {
+  it('falls back to the default interval when there are no subscriptions at all', () => {
+    assert.equal(computePollIntervalMinutes([]), DEFAULT_POLL_INTERVAL_MINUTES);
+  });
+
+  it('falls back to the default interval when every subscription is paused', () => {
+    const subs = [{ frequencyMinutes: 0 }, { frequencyMinutes: 0 }];
+    assert.equal(computePollIntervalMinutes(subs), DEFAULT_POLL_INTERVAL_MINUTES);
+  });
+
+  it('derives the interval from the fastest active subscription, minus the prep buffer', () => {
+    const subs = [{ frequencyMinutes: 1440 }, { frequencyMinutes: 60 }, { frequencyMinutes: 10080 }];
+    assert.equal(computePollIntervalMinutes(subs), 60 - PREP_BUFFER_MINUTES);
+  });
+
+  it('ignores paused subscriptions when finding the fastest one', () => {
+    const subs = [{ frequencyMinutes: 0 }, { frequencyMinutes: 360 }];
+    assert.equal(computePollIntervalMinutes(subs), 360 - PREP_BUFFER_MINUTES);
+  });
+
+  it('never returns less than the minimum floor, even for an implausibly fast frequency', () => {
+    const subs = [{ frequencyMinutes: 1 }];
+    assert.equal(computePollIntervalMinutes(subs), MIN_POLL_INTERVAL_MINUTES);
+  });
+
+  it('ignores malformed frequency values instead of letting them break the calculation', () => {
+    const subs = [{ frequencyMinutes: null }, { frequencyMinutes: undefined }, { frequencyMinutes: NaN }, { frequencyMinutes: 1440 }];
+    assert.equal(computePollIntervalMinutes(subs), 1440 - PREP_BUFFER_MINUTES);
   });
 });
 

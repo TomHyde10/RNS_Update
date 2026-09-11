@@ -40,11 +40,6 @@ const seenStore = require('./lib/seenStore');
 
 const PORT = process.env.PORT || 3000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-// How often the process checks whether any subscription is due - not the
-// subscriptions' own frequency (every hour/day/week, set per-subscription
-// and stored in notification_subscriptions.frequency_minutes), just how
-// finely that due-check is polled.
-const DIGEST_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
 const STATIC_FILES = {
   '/': { file: 'index.html', type: 'text/html' },
@@ -327,6 +322,11 @@ const server = http.createServer(async (req, res) => {
         });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ subscription }));
+        // Not awaited - the response above shouldn't wait on this. Picks
+        // up a newly-created subscription's own frequency immediately
+        // rather than leaving the scheduler on whatever interval it had
+        // computed before this subscription existed.
+        scheduleNextDigestCheck();
       } catch (err) {
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: `Failed to save subscription: ${err.message || err}` }));
@@ -355,6 +355,10 @@ const server = http.createServer(async (req, res) => {
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ subscription }));
+        // Not awaited - see the same call in the POST route above. A
+        // frequency change (faster or slower, or pausing) should be
+        // reflected in the scheduler's own check cadence right away.
+        scheduleNextDigestCheck();
       } catch (err) {
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: `Failed to save subscription: ${err.message || err}` }));
@@ -437,6 +441,10 @@ const server = http.createServer(async (req, res) => {
       await subscriptionStore.deleteSubscription(id);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
+      // Not awaited - see the same call in the POST route above. Removing
+      // the fastest subscriber should let the scheduler relax its cadence
+      // right away too, not just next time it happens to fire.
+      scheduleNextDigestCheck();
     } catch (err) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: `Failed to delete subscription: ${err.message || err}` }));
@@ -463,29 +471,56 @@ const server = http.createServer(async (req, res) => {
 });
 
 // Checks every subscription against its own frequency and sends any that
-// are due. Runs from a plain setInterval rather than an external cron,
-// since this process (unlike the Vercel serverless functions in api/*.js)
-// stays alive between requests - see the "truly automatic" tradeoff noted
-// in lib/subscriptionStore.js. A subscription's own due-ness is time-based
-// (last_sent_at + its frequency), so a missed or delayed tick just sends
-// slightly late rather than skipping content. The actual due-check/send
-// logic lives in lib/digestScheduler.js (unit-tested there against a fake
-// store and sender) - this just supplies the real ones.
+// are due. Runs from a self-rescheduling setTimeout rather than an
+// external cron or a fixed setInterval, since this process (unlike the
+// Vercel serverless functions in api/*.js) stays alive between requests -
+// see the "truly automatic" tradeoff noted in lib/subscriptionStore.js. A
+// subscription's own due-ness is time-based (last_sent_at + its
+// frequency), so a missed or delayed tick just sends slightly late rather
+// than skipping content. The actual due-check/send logic lives in
+// lib/digestScheduler.js (unit-tested there against a fake store and
+// sender) - this just supplies the real ones.
 function runDueDigests() {
   return digestScheduler.runDueDigests({ subscriptionStore, sendDigestForSubscription });
+}
+
+let digestCheckTimer = null;
+
+// The check cadence itself isn't fixed - it's derived from the fastest
+// active subscription (see digestScheduler.computePollIntervalMinutes), so
+// re-run this any time the subscription set might have changed (after
+// create/update/delete, not just once at startup) rather than only ever
+// scheduling the next check from the previous one, which would keep using
+// a since-stale interval until the next tick happens to notice.
+async function scheduleNextDigestCheck() {
+  if (!subscriptionStore.enabled) return;
+  if (digestCheckTimer) clearTimeout(digestCheckTimer);
+
+  let subscriptions = [];
+  try {
+    subscriptions = await subscriptionStore.listSubscriptions();
+  } catch (err) {
+    console.error('Failed to load subscriptions for digest scheduling:', err.message || err);
+  }
+  const intervalMs = digestScheduler.computePollIntervalMinutes(subscriptions) * 60 * 1000;
+
+  // unref() so this timer alone can't keep the process alive - in normal
+  // operation the still-listening HTTP server already does that; this
+  // just stops it from being a second, redundant reason to stay up (and
+  // from blocking a clean exit in test/subscriptionsApi.test.js, which
+  // closes the server between test files but has no handle on this timer
+  // to clear otherwise).
+  digestCheckTimer = setTimeout(async () => {
+    await runDueDigests();
+    scheduleNextDigestCheck();
+  }, intervalMs).unref();
 }
 
 server.listen(PORT, () => {
   console.log(`RNS Update running at http://localhost:${PORT}`);
   if (subscriptionStore.enabled) {
-    // unref() so this timer alone can't keep the process alive - in normal
-    // operation the still-listening HTTP server already does that; this
-    // just stops the interval from being a second, redundant reason to
-    // stay up (and from blocking a clean exit in test/subscriptionsApi.test.js,
-    // which closes the server between test files but has no handle on
-    // this timer to clear otherwise).
-    setInterval(runDueDigests, DIGEST_CHECK_INTERVAL_MS).unref();
     runDueDigests(); // catch up on anything due right after a cold start
+    scheduleNextDigestCheck();
   }
 });
 
