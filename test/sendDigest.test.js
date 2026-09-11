@@ -6,7 +6,7 @@
 // pipeline around them is covered without a live network dependency.
 const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { digestWindowStart, filterDigestReports, buildDigestHtml, digestSendAllowed } = require('../lib/sendDigest');
+const { digestWindowStart, filterDigestReports, buildDigestHtml, digestSendAllowed, isEmptyDigestThrottled } = require('../lib/sendDigest');
 
 describe('digestWindowStart', () => {
   it('covers exactly one cycle back for a subscription that has never sent', () => {
@@ -25,6 +25,37 @@ describe('digestWindowStart', () => {
     const now = new Date('2026-01-02T12:00:00Z');
     const since = digestWindowStart({ frequencyMinutes: 1440, lastSentAt: '2026-01-02T09:00:00Z' }, now);
     assert.equal(since.toISOString(), '2026-01-02T09:00:00.000Z');
+  });
+});
+
+describe('isEmptyDigestThrottled', () => {
+  it('is never throttled for a subscription that has never sent at all', () => {
+    assert.equal(isEmptyDigestThrottled(null, new Date()), false);
+  });
+
+  it('is throttled well within the default 24h gap', () => {
+    const now = new Date('2026-01-02T12:00:00Z');
+    const lastSentAt = new Date(now.getTime() - 1 * 60 * 60 * 1000).toISOString(); // 1h ago
+    assert.equal(isEmptyDigestThrottled(lastSentAt, now), true);
+  });
+
+  it('is no longer throttled once the default 24h gap has passed', () => {
+    const now = new Date('2026-01-02T12:00:00Z');
+    const lastSentAt = new Date(now.getTime() - 25 * 60 * 60 * 1000).toISOString(); // 25h ago
+    assert.equal(isEmptyDigestThrottled(lastSentAt, now), false);
+  });
+
+  it('clears exactly at the boundary (only strictly less than the gap stays throttled)', () => {
+    const now = new Date('2026-01-02T12:00:00Z');
+    const lastSentAt = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(); // exactly 24h ago
+    assert.equal(isEmptyDigestThrottled(lastSentAt, now), false);
+  });
+
+  it('honours a custom gap', () => {
+    const now = new Date('2026-01-02T12:00:00Z');
+    const lastSentAt = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString(); // 2h ago
+    assert.equal(isEmptyDigestThrottled(lastSentAt, now, 1), false); // past a 1h gap
+    assert.equal(isEmptyDigestThrottled(lastSentAt, now, 3), true); // within a 3h gap
   });
 });
 

@@ -116,7 +116,7 @@ describe('runDueDigests', () => {
     assert.notEqual(store.rows.find((r) => r.id === 'not-due').lastSentAt, now.toISOString());
   });
 
-  it('still marks a due subscription sent when there was nothing new to send', () => {
+  it('does not mark a due subscription sent when sendDigestForSubscription declined to send (e.g. a throttled empty digest)', () => {
     const now = new Date('2026-01-02T12:00:00Z');
     const store = makeStore([{ id: '1', email: 'a@b.com', frequencyMinutes: 60, lastSentAt: null }]);
     return runDueDigests({
@@ -126,11 +126,15 @@ describe('runDueDigests', () => {
       log: noopLog,
       logError: noopLog,
     }).then((result) => {
-      // "sent" counts actual emails, not due-checks performed - nothing was
-      // actually emailed here, but the window still moves forward so the
-      // next check doesn't re-scan the same already-covered period.
+      // "sent" counts actual emails, not due-checks performed. Unlike a
+      // real send, this deliberately does NOT advance lastSentAt - see
+      // lib/sendDigest.js's isEmptyDigestThrottled(), which caps empty
+      // digests to at most one per day using exactly this cursor: if it
+      // moved on every check regardless of whether anything was actually
+      // emailed, the throttle's own "time since last sent" would never
+      // reach the gap it's waiting for.
       assert.equal(result.sent, 0);
-      assert.equal(store.rows[0].lastSentAt, now.toISOString());
+      assert.equal(store.rows[0].lastSentAt, null);
     });
   });
 
