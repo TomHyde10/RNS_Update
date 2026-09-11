@@ -525,6 +525,28 @@ function renameCompany(lei, name) {
 // searches, greyed out when off), an editable name field (renaming wasn't
 // possible at all before - only add/remove), the LEI for reference, and
 // the history/remove actions.
+// A rename only changes which name a company's already-fetched reports
+// display under - it doesn't change what reports exist - so this patches
+// lastReports in place and re-renders, instead of the full loadReports()
+// network round-trip every other watchlist edit (add/remove/toggle) needs.
+// That full reload firing on every single name field's blur is what made
+// the report table behind the Edit companies overlay visibly reload/flicker
+// while renaming several companies in a row.
+function updateReportsCompanyName(lei, name) {
+  if (lastReports.length === 0) return;
+  const resolved = name.trim();
+  let changed = false;
+  for (const report of lastReports) {
+    if (report.lei !== lei) continue;
+    const nextCompany = resolved || report.rawCompany || report.company;
+    if (report.company !== nextCompany) {
+      report.company = nextCompany;
+      changed = true;
+    }
+  }
+  if (changed) renderReportsList();
+}
+
 function renderEditCompanyList() {
   const listEl = document.getElementById('edit-company-list');
   const filterText = document.getElementById('edit-company-filter').value.trim().toLowerCase();
@@ -568,7 +590,7 @@ function renderEditCompanyList() {
   listEl.querySelectorAll('.edit-company-name').forEach((input) => {
     input.addEventListener('change', () => {
       renameCompany(input.dataset.lei, input.value);
-      loadReports();
+      updateReportsCompanyName(input.dataset.lei, input.value);
     });
   });
 
@@ -997,6 +1019,11 @@ async function loadReports() {
     const namesByLei = new Map(watchlist.map((c) => [c.lei, c.name]));
     const resolvedReports = data.reports.map((r) => ({
       ...r,
+      // rawCompany keeps the NSM-supplied name around after `company` is
+      // overwritten below, so a later rename (see updateReportsCompanyName())
+      // can still fall back to it correctly if the custom name is cleared,
+      // without needing a fresh fetch to know what it originally was.
+      rawCompany: r.company,
       company: (namesByLei.get(r.lei) || '').trim() || r.company,
     }));
     lastReports = resolvedReports;
