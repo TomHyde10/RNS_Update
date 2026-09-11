@@ -5,8 +5,8 @@
 //
 // `lei` is the company's Legal Entity Identifier (20 alphanumeric
 // characters) - the FCA's National Storage Mechanism has no ISIN field, so
-// filings are looked up by LEI, not ISIN. Use the "Add multiple companies
-// by ISIN" box on the page to resolve ISINs to LEIs via GLEIF.
+// filings are looked up by LEI, not ISIN. Look one up at search.gleif.org
+// if you only know a company's ISIN or name.
 //
 // `name` is left blank throughout below - normalise() in lib/fetchReports.js
 // falls back to the live `company` field from the NSM response when a

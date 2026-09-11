@@ -21,9 +21,8 @@ NSM search so the browser doesn't need to talk to it directly.
    `initWatchlist()` in `app.js`), not just the first, so they're always
    present at startup. Removing one of the defaults via the page only lasts
    until the next reload, since it's added back in; companies you add
-   beyond the defaults (LEI field, or the bulk ISIN box) are untouched by
-   this and persist normally. The list otherwise lives in that browser's
-   `localStorage`.
+   beyond the defaults are untouched by this and persist normally. The list
+   otherwise lives in that browser's `localStorage`.
 3. Under "Search settings", choose a **time period** (24 hours to 90 days)
    and the **report types** to match — checkboxes for the four confirmed
    category names, plus an "Other report types" field for anything not
@@ -95,15 +94,9 @@ hitting the API directly).
 
 The NSM has no ISIN field at all — filings are indexed by **LEI** (Legal
 Entity Identifier, a 20-character code) and company name, confirmed from a
-real search export. Rather than requiring everyone to look up LEIs by hand,
-the "Add multiple companies by ISIN" box on the page resolves ISINs to LEIs
-automatically via [GLEIF](https://www.gleif.org/en/lei-data/gleif-api)'s
-free, public, keyless lookup API (`lib/resolveIsin.js`, `/api/resolve`) — a
-genuinely documented API, unlike the NSM search itself. Paste one ISIN per
-line (or comma/space-separated) and it adds each resolved company straight
-to your watchlist, reporting per-ISIN failures (not found, GLEIF
-unreachable, etc.) rather than failing the whole batch. You can still add a
-company directly by LEI via the main form if you already know it.
+real search export. Add a company via the main form using its LEI (look one
+up at [search.gleif.org](https://search.gleif.org/) if you only know its
+ISIN or name).
 
 ### Email notifications
 
@@ -303,21 +296,6 @@ unverifiable from this sandbox has come up in this project.
 
 ## API integration notes
 
-### GLEIF (ISIN → LEI resolution)
-
-```
-GET https://api.gleif.org/api/v1/lei-records?filter[isin]=<ISIN>
-```
-
-Confirmed from a real response: `data[0].attributes.lei` and
-`data[0].attributes.entity.legalName.name`. One request per ISIN
-(`resolveIsins()` in `lib/resolveIsin.js`) — this only runs when you
-resolve companies to add, not on every report refresh, so the per-ISIN
-request count is an acceptable tradeoff against guessing whether
-`filter[isin]` accepts a comma-separated batch in one call (unconfirmed,
-so not relied on). Unlike the NSM search below, this is a real documented
-public API, so it's treated as comparatively solid ground.
-
 ### NSM search (reports)
 
 This is **not a documented public API** — there is no official developer
@@ -466,18 +444,16 @@ the connection is still encrypted, just not certificate-verified).
 ```
 index.html, style.css, app.js   Frontend: LEI watchlist manager (localStorage) + reports list
 api/reports.js                  Vercel serverless function: GET /api/reports
-api/resolve.js                  Vercel serverless function: GET /api/resolve (ISIN -> LEI via GLEIF)
 api/watchlist.js                Vercel serverless function: GET /api/watchlist (seeds a fresh browser)
 api/feed.js                     Vercel serverless function: GET /api/feed (RSS feed of matching reports)
 api/notify.js                   Vercel serverless function: POST /api/notify (email a report - see "Email notifications")
 lib/fetchReports.js             NSM search call + filtering logic (shared by api/ and server.js)
 lib/cacheStore.js               Optional Postgres-backed NSM cache (used when DATABASE_URL is set - see README)
-lib/resolveIsin.js              GLEIF ISIN->LEI resolution (shared by api/ and server.js)
 lib/buildFeed.js                Builds the RSS 2.0 XML for /api/feed (shared by api/ and server.js)
 lib/sendNotification.js         Email sending via the Resend API (shared by api/ and server.js)
 lib/basicAuth.js                HTTP Basic Auth check used by server.js (see "Authentication") - Vercel's middleware.js re-implements the same check separately
 middleware.js                   Vercel Edge Middleware - the Vercel-side half of "Authentication", gates every route before it reaches api/ or the static files
-server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist + /api/feed + /api/notify)
+server.js                       Plain Node dev server (static files + /api/reports + /api/watchlist + /api/feed + /api/notify)
 config/watchlist.js             Default company list - seeds a fresh browser, and fallback for /api/reports called with no `leis` param
 Dockerfile, .dockerignore       Fallback build path for Northflank (or anywhere else that wants a container) - see "Deploying (Northflank)"
 ```

@@ -5,7 +5,6 @@ const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
 const { fetchReports } = require('./lib/fetchReports');
-const { resolveIsins } = require('./lib/resolveIsin');
 const { buildRssFeed } = require('./lib/buildFeed');
 const { sendNotification } = require('./lib/sendNotification');
 const watchlist = require('./config/watchlist');
@@ -59,24 +58,6 @@ const server = http.createServer(async (req, res) => {
     });
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(body));
-    return;
-  }
-
-  if (parsed.pathname === '/api/resolve') {
-    const isins = (parsed.searchParams.get('isins') || '')
-      .split(',')
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean);
-
-    if (isins.length === 0) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'No isins provided' }));
-      return;
-    }
-
-    const results = await resolveIsins(isins);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ results }));
     return;
   }
 

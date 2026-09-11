@@ -24,8 +24,8 @@
 
   <div class="layout">
     <aside class="sidebar">
-      <section id="watchlist-manager" class="panel">
-        <h2>Companies</h2>
+      <details id="watchlist-manager" class="panel">
+        <summary>Companies</summary>
         <form id="add-company-form">
           <input id="lei-input" type="text" placeholder="LEI e.g. 549300UC0QPP7Y0W8056" maxlength="20" autocomplete="off" required />
           <input id="name-input" type="text" placeholder="Display name (optional)" autocomplete="off" />
@@ -40,15 +40,7 @@
           <input type="file" id="watchlist-import-file" accept="application/json" hidden />
         </div>
         <p id="watchlist-io-status" class="hint" hidden></p>
-
-        <details id="bulk-add">
-          <summary>Add multiple by ISIN</summary>
-          <p class="hint">Paste ISINs, one per line (or comma/space-separated). Each is resolved to its LEI via GLEIF, then added to the list above.</p>
-          <textarea id="bulk-isin-input" rows="5" placeholder="GB0003052338&#10;GB0001990497&#10;..."></textarea>
-          <button type="button" id="bulk-resolve-btn">Resolve &amp; add</button>
-          <pre id="bulk-status"></pre>
-        </details>
-      </section>
+      </details>
 
       <section id="settings-manager" class="panel">
         <h2>Search settings</h2>

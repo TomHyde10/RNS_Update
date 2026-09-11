@@ -5,6 +5,7 @@ const HISTORY_CACHE_KEY = 'rns-history-cache';
 const SORT_KEY = 'rns-sort';
 const THEME_KEY = 'rns-theme';
 const NOTIFY_EMAIL_KEY = 'rns-notify-email';
+const WATCHLIST_COLLAPSED_KEY = 'rns-watchlist-collapsed';
 const LEI_RE = /^[A-Z0-9]{20}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEFAULT_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report'];
@@ -181,6 +182,17 @@ function initTheme() {
   select.addEventListener('change', () => {
     localStorage.setItem(THEME_KEY, select.value);
     applyTheme(select.value);
+  });
+}
+
+// The Companies panel is a <details> element so it can be collapsed once a
+// watchlist is set up and rarely needs editing - state persisted the same
+// way as the other small UI preferences above (theme, sort, etc.).
+function initWatchlistCollapse() {
+  const details = document.getElementById('watchlist-manager');
+  details.open = localStorage.getItem(WATCHLIST_COLLAPSED_KEY) !== 'true';
+  details.addEventListener('toggle', () => {
+    localStorage.setItem(WATCHLIST_COLLAPSED_KEY, String(!details.open));
   });
 }
 
@@ -743,56 +755,6 @@ document.getElementById('sort-select').addEventListener('change', () => {
   renderReportsList();
 });
 
-document.getElementById('bulk-resolve-btn').addEventListener('click', async () => {
-  const statusEl = document.getElementById('bulk-status');
-  const inputEl = document.getElementById('bulk-isin-input');
-  const isins = [...new Set(inputEl.value.split(/[\s,]+/).map((s) => s.trim().toUpperCase()).filter(Boolean))];
-
-  if (isins.length === 0) return;
-
-  statusEl.textContent = `Resolving ${isins.length} ISIN(s)…`;
-
-  try {
-    const res = await fetch(`/api/resolve?isins=${encodeURIComponent(isins.join(','))}`);
-    const data = await res.json();
-
-    if (!res.ok) {
-      statusEl.textContent = `Error: ${data.error || res.status}`;
-      return;
-    }
-
-    const watchlist = loadWatchlist();
-    const existingLeis = new Set(watchlist.map((c) => c.lei));
-    const lines = [];
-    let added = 0;
-
-    for (const r of data.results) {
-      if (r.error) {
-        lines.push(`✗ ${r.isin}: ${r.error}`);
-        continue;
-      }
-      if (existingLeis.has(r.lei)) {
-        lines.push(`- ${r.isin}: already in your list (${r.name || r.lei})`);
-        continue;
-      }
-      watchlist.push({ lei: r.lei, name: r.name || '' });
-      existingLeis.add(r.lei);
-      lines.push(`✓ ${r.isin} → ${r.name || r.lei}`);
-      added++;
-    }
-
-    saveWatchlist(watchlist);
-    renderWatchlist();
-    statusEl.textContent = lines.join('\n');
-    if (added > 0) {
-      inputEl.value = '';
-      loadReports();
-    }
-  } catch (err) {
-    statusEl.textContent = `Failed to resolve: ${err}`;
-  }
-});
-
 function setupAutoRefresh(settings) {
   if (autoRefreshTimer) {
     clearInterval(autoRefreshTimer);
@@ -864,6 +826,7 @@ document.getElementById('notify-email-change').addEventListener('click', () => {
 
 (async () => {
   initTheme();
+  initWatchlistCollapse();
   adoptUrlParams();
   await initWatchlist();
   initSettingsForm();
