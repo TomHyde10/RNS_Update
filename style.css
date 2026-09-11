@@ -50,6 +50,8 @@
 
 * { box-sizing: border-box; }
 
+html, body { height: 100%; }
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
@@ -61,11 +63,32 @@ body {
      wide monitors instead of leaving large empty margins either side. */
   padding: 1.5rem;
   font-size: 14px;
+  /* The whole app fits one viewport - header is a fixed-height strip and
+     .layout takes the rest, with the sidebar and reports table scrolling
+     internally instead of the page scrolling past the fold. Below the
+     tablet breakpoint this is switched back to normal document flow,
+     since a phone-height viewport can't reasonably fit everything. */
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 
-header { margin-bottom: 1.5rem; }
+header { margin-bottom: 1.5rem; flex: 0 0 auto; }
 header h1 { margin-bottom: 0.2rem; font-size: 1.6rem; font-weight: 700; letter-spacing: -0.01em; }
 header p { color: var(--muted); margin-top: 0; font-size: 0.85rem; }
+
+/* Sits above the title, at the top-left of the page - a quick way to check
+   or change where notifications go without digging into the sidebar. */
+.notify-email-button {
+  display: inline-block;
+  margin-bottom: 0.6rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  padding: 0.3rem 0.65rem;
+}
+
+.notify-email-button span { color: var(--fg); font-weight: 600; }
 
 .header-top {
   display: flex;
@@ -119,24 +142,38 @@ button:disabled { opacity: 0.6; cursor: default; }
   grid-template-columns: minmax(260px, 320px) 1fr;
   gap: 1.5rem;
   align-items: start;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .sidebar {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  position: sticky;
-  top: 1.5rem;
+  height: 100%;
+  overflow-y: auto;
+  padding-right: 0.25rem;
 }
 
 /* Grid items default to min-width:auto (content-based), so a wide
    descendant (the reports table below its 640px breakpoint) would
    otherwise blow out this column's width instead of scrolling within it. */
-.main-content { min-width: 0; }
+.main-content {
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+#reports-header, #reports-controls { flex: 0 0 auto; }
 
 @media (max-width: 860px) {
-  .layout { grid-template-columns: 1fr; }
-  .sidebar { position: static; }
+  body { height: auto; overflow: visible; }
+  .layout { grid-template-columns: 1fr; height: auto; }
+  .sidebar { height: auto; overflow-y: visible; }
+  .main-content { height: auto; }
 }
 
 .panel {
@@ -366,7 +403,15 @@ button:disabled { opacity: 0.6; cursor: default; }
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel-bg);
-  overflow: hidden;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.reports-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 .reports-table {

@@ -9,6 +9,9 @@
 <body>
   <header class="header-top">
     <div>
+      <button type="button" id="notify-email-button" class="notify-email-button" title="Set the email address that receives report notifications">
+        Notification email: <span id="notify-email-display">not set</span>
+      </button>
       <h1>RNS Update</h1>
       <p>Company report disclosures for the time period and types below — sourced directly from the FCA's National Storage Mechanism, no API key required.</p>
     </div>
@@ -42,8 +45,8 @@
         <p id="watchlist-io-status" class="hint" hidden></p>
       </details>
 
-      <section id="settings-manager" class="panel">
-        <h2>Search settings</h2>
+      <details id="settings-manager" class="panel">
+        <summary>Search settings</summary>
         <form id="settings-form">
           <label>
             Time period
@@ -62,6 +65,8 @@
             <label class="checkbox-row"><input type="checkbox" id="cat-annual" value="Annual Financial Report" /> Annual Financial Report</label>
             <label class="checkbox-row"><input type="checkbox" id="cat-nav" value="Net Asset Value(s)" /> Net Asset Value(s)</label>
             <label class="checkbox-row"><input type="checkbox" id="cat-dividend" value="Dividend Declaration" /> Dividend Declaration</label>
+            <label class="checkbox-row"><input type="checkbox" id="cat-portfolio" value="Portfolio Update" /> Portfolio Update</label>
+            <label class="checkbox-row"><input type="checkbox" id="cat-misc" value="Miscellaneous" /> Miscellaneous</label>
           </fieldset>
           <label>
             Other report types
@@ -85,13 +90,7 @@
             <button type="button" id="categories-reset">Reset</button>
           </div>
         </form>
-      </section>
-
-      <section id="notify-manager" class="panel">
-        <h2>Notification email</h2>
-        <p class="hint">Sent to: <span id="notify-email-display">not set</span></p>
-        <button type="button" id="notify-email-change">Set email</button>
-      </section>
+      </details>
     </aside>
 
     <main class="main-content">

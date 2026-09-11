@@ -6,10 +6,11 @@ const SORT_KEY = 'rns-sort';
 const THEME_KEY = 'rns-theme';
 const NOTIFY_EMAIL_KEY = 'rns-notify-email';
 const WATCHLIST_COLLAPSED_KEY = 'rns-watchlist-collapsed';
+const SETTINGS_COLLAPSED_KEY = 'rns-settings-collapsed';
 const LEI_RE = /^[A-Z0-9]{20}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEFAULT_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report'];
-const KNOWN_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report', 'Net Asset Value(s)', 'Dividend Declaration'];
+const KNOWN_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report', 'Net Asset Value(s)', 'Dividend Declaration', 'Portfolio Update', 'Miscellaneous'];
 const MAX_SEEN = 1000;
 const SORT_OPTIONS = ['date-desc', 'date-asc', 'company-asc', 'company-desc'];
 const THEME_OPTIONS = ['auto', 'light', 'dark'];
@@ -196,6 +197,17 @@ function initWatchlistCollapse() {
   });
 }
 
+// Search settings is a <details> element too, but collapsed by default
+// (unlike Companies above) since it's set up once and rarely revisited -
+// only stays open across reloads once the user has explicitly opened it.
+function initSettingsCollapse() {
+  const details = document.getElementById('settings-manager');
+  details.open = localStorage.getItem(SETTINGS_COLLAPSED_KEY) === 'false';
+  details.addEventListener('toggle', () => {
+    localStorage.setItem(SETTINGS_COLLAPSED_KEY, String(!details.open));
+  });
+}
+
 function getNotifyEmail() {
   return (localStorage.getItem(NOTIFY_EMAIL_KEY) || '').trim();
 }
@@ -275,6 +287,22 @@ function saveHistoryCache(cache) {
     if (entry && now - entry.fetchedAt < HISTORY_CACHE_PRUNE_MS) pruned[lei] = entry;
   }
   localStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify(pruned));
+}
+
+// Reads a fetch Response as JSON, but tolerates a body that isn't valid
+// JSON (a plain-text 404 from a route that doesn't exist - e.g. a dev
+// server running stale code - or an HTML error page from a proxy in front
+// of the real deployment) instead of letting JSON.parse throw a cryptic
+// "Unexpected token" SyntaxError. Callers get the HTTP status either way, so
+// existing `if (!ok) ...data.error...` checks keep working unchanged.
+async function parseJsonResponse(res) {
+  const text = await res.text();
+  try {
+    return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : {} };
+  } catch {
+    const snippet = text.trim().slice(0, 200) || '(empty response)';
+    throw new Error(`Server returned ${res.status}${res.statusText ? ` ${res.statusText}` : ''}: ${snippet}`);
+  }
 }
 
 function escapeHtml(str) {
@@ -525,8 +553,8 @@ function renderReportsList() {
           // anything else this client might send (see lib/sendNotification.js).
           body: JSON.stringify({ lei: report.lei, id: report.id, title: report.title, publishedAt: report.publishedAt, to: email }),
         });
-        const result = await res.json();
-        statusSpan.textContent = result.ok ? 'Notification sent' : `Failed: ${result.error || res.status}`;
+        const { data } = await parseJsonResponse(res);
+        statusSpan.textContent = data.ok ? 'Notification sent' : `Failed: ${data.error || res.status}`;
       } catch (err) {
         statusSpan.textContent = `Failed: ${err}`;
       } finally {
@@ -557,8 +585,8 @@ async function viewQueryString(view) {
   const key = JSON.stringify(view);
   if (!viewTokenCache.has(key)) {
     const res = await fetch('/api/view', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: key });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `Couldn't create a view link (${res.status})`);
+    const { ok, status, data } = await parseJsonResponse(res);
+    if (!ok) throw new Error(data.error || `Couldn't create a view link (${status})`);
     if (!data.token) {
       viewTokensAvailable = false;
       return readable;
@@ -589,8 +617,8 @@ async function adoptUrlParams() {
   if (token) {
     try {
       const res = await fetch(`/api/view?${new URLSearchParams({ v: token })}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || res.status);
+      const { ok, status, data } = await parseJsonResponse(res);
+      if (!ok) throw new Error(data.error || status);
       leisValue = data.leis.join(',');
       daysValue = String(data.days);
       categoriesValue = data.categories.join(',');
@@ -666,10 +694,10 @@ async function loadReports() {
     syncUrlWithState(query);
 
     const res = await fetch(`/api/reports?${query}`);
-    const data = await res.json();
+    const { ok, status, data } = await parseJsonResponse(res);
 
-    if (!res.ok) {
-      statusEl.textContent = `Error: ${data.error || res.status}`;
+    if (!ok) {
+      statusEl.textContent = `Error: ${data.error || status}`;
       if (data.details) debugEl.textContent = JSON.stringify(data.details, null, 2);
       return;
     }
@@ -763,10 +791,10 @@ async function openHistoryOverlay(lei, displayName, { force = false } = {}) {
   try {
     const query = await viewQueryString({ leis: lei, days: '365' });
     const res = await fetch(`/api/reports?${query}`);
-    const data = await res.json();
+    const { ok, status, data } = await parseJsonResponse(res);
 
-    if (!res.ok) {
-      statusEl.textContent = `Error: ${data.error || res.status}`;
+    if (!ok) {
+      statusEl.textContent = `Error: ${data.error || status}`;
       return;
     }
 
@@ -886,13 +914,14 @@ function initReportControls() {
   document.getElementById('sort-select').value = loadSort();
 }
 
-document.getElementById('notify-email-change').addEventListener('click', () => {
+document.getElementById('notify-email-button').addEventListener('click', () => {
   openNotifyEmailOverlay();
 });
 
 (async () => {
   initTheme();
   initWatchlistCollapse();
+  initSettingsCollapse();
   await adoptUrlParams();
   await initWatchlist();
   initSettingsForm();
