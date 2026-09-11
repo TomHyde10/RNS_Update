@@ -1,6 +1,10 @@
 // Vercel Node serverless function: POST /api/notify
-// Body: { company, title, category, publishedAt, url, lei, to } - the
-// report to email a notification about, plus the recipient address.
+// Body: { lei, id, title, publishedAt, to } - identifiers used to look up
+// and re-verify the report server-side (see findReport() in
+// lib/fetchReports.js), plus the recipient address. The email's actual
+// subject/body/attachment are always built from that authoritative lookup,
+// never from client-supplied text, so a POST can't be used to mail
+// arbitrary attacker-authored content or fetch an arbitrary attachment URL.
 const { sendNotification } = require('../lib/sendNotification');
 
 module.exports = async (req, res) => {

@@ -494,7 +494,10 @@ function renderReportsList() {
         const res = await fetch('/api/notify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...report, to: email }),
+          // Only identifiers + recipient - the server re-derives the actual
+          // email content from a fresh NSM lookup rather than trusting
+          // anything else this client might send (see lib/sendNotification.js).
+          body: JSON.stringify({ lei: report.lei, id: report.id, title: report.title, publishedAt: report.publishedAt, to: email }),
         });
         const result = await res.json();
         statusSpan.textContent = result.ok ? 'Notification sent' : `Failed: ${result.error || res.status}`;
