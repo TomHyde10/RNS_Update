@@ -9,6 +9,7 @@ const { resolveIsins } = require('./lib/resolveIsin');
 const { buildRssFeed } = require('./lib/buildFeed');
 const { sendNotification } = require('./lib/sendNotification');
 const watchlist = require('./config/watchlist');
+const { checkBasicAuth, REALM } = require('./lib/basicAuth');
 
 // Some platforms (e.g. Northflank on certain plans) only support mounting
 // secret *files* into the container, not secret environment variables. For
@@ -19,7 +20,7 @@ const watchlist = require('./config/watchlist');
 // (exact name, no extension) in the platform's UI and this picks it up with
 // no environment variable needed at all. A real env var, if set, always wins.
 const SECRET_FILE_DIR = process.env.SECRET_FILE_DIR || '/etc/secrets';
-for (const key of ['RESEND_API_KEY', 'NOTIFY_EMAIL_FROM', 'NOTIFY_EMAIL_TO', 'DATABASE_URL']) {
+for (const key of ['RESEND_API_KEY', 'NOTIFY_EMAIL_FROM', 'NOTIFY_EMAIL_TO', 'DATABASE_URL', 'APP_USERNAME', 'APP_PASSWORD']) {
   if (process.env[key]) continue;
   try {
     process.env[key] = fs.readFileSync(path.join(SECRET_FILE_DIR, key), 'utf8').trim();
@@ -38,6 +39,16 @@ const STATIC_FILES = {
 };
 
 const server = http.createServer(async (req, res) => {
+  // Gated on every request, before any routing - protects the static
+  // frontend and every /api/* route alike. No-op (always passes) when
+  // APP_PASSWORD isn't set, so this doesn't affect a deployment that hasn't
+  // opted in. See lib/basicAuth.js.
+  if (!checkBasicAuth(req.headers['authorization'])) {
+    res.writeHead(401, { 'WWW-Authenticate': `Basic realm="${REALM}"`, 'Content-Type': 'text/plain' });
+    res.end('Authentication required.');
+    return;
+  }
+
   const parsed = new URL(req.url, `http://${req.headers.host}`);
 
   if (parsed.pathname === '/api/reports') {

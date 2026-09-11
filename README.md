@@ -181,6 +181,32 @@ variables" below) alongside `RESEND_API_KEY`. Once both are set, the
 recipient in the app itself can be any address, not just the Resend
 account's own signup email.
 
+## Authentication
+
+By default the whole app — every page and API route, including
+`/api/notify` — is open to anyone with the URL, same as before. Set
+`APP_PASSWORD` to require an HTTP Basic Auth login (the browser's own
+username/password popup, no custom login page) before anything loads.
+Username defaults to `admin`; set `APP_USERNAME` to change it.
+
+This is enforced on every deployment method:
+
+- **server.js** (local dev, Render, Northflank) checks it itself, on every
+  request, before any routing — see `lib/basicAuth.js`.
+- **Vercel** uses `middleware.js` at the repo root (Vercel Edge Middleware),
+  which runs before both the static files and every `api/*.js` function.
+  It's a separate, more restricted runtime from `server.js`'s plain Node
+  process (no `Buffer`, no filesystem), so it re-implements the same check
+  with only Web-standard APIs (`atob`) rather than importing
+  `lib/basicAuth.js` — keep the two in sync if this logic ever changes.
+
+Set `APP_USERNAME`/`APP_PASSWORD` as environment variables the same way as
+any other secret in this project (or as secret files — see "Secret files
+instead of secret variables" below). Was added specifically to stop an
+anonymous visitor from triggering the "Send Notification" button (which
+sends real email from this deployment's verified domain) — protecting the
+whole app was simpler and more robust than gating that one endpoint alone.
+
 ## Deploying (Vercel)
 
 This repo needs no build step — Vercel's zero-config Node setup serves the
@@ -449,6 +475,8 @@ lib/cacheStore.js               Optional Postgres-backed NSM cache (used when DA
 lib/resolveIsin.js              GLEIF ISIN->LEI resolution (shared by api/ and server.js)
 lib/buildFeed.js                Builds the RSS 2.0 XML for /api/feed (shared by api/ and server.js)
 lib/sendNotification.js         Email sending via the Resend API (shared by api/ and server.js)
+lib/basicAuth.js                HTTP Basic Auth check used by server.js (see "Authentication") - Vercel's middleware.js re-implements the same check separately
+middleware.js                   Vercel Edge Middleware - the Vercel-side half of "Authentication", gates every route before it reaches api/ or the static files
 server.js                       Plain Node dev server (static files + /api/reports + /api/resolve + /api/watchlist + /api/feed + /api/notify)
 config/watchlist.js             Default company list - seeds a fresh browser, and fallback for /api/reports called with no `leis` param
 Dockerfile, .dockerignore       Fallback build path for Northflank (or anywhere else that wants a container) - see "Deploying (Northflank)"
