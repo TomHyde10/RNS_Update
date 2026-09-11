@@ -91,26 +91,54 @@ describe('buildDigestHtml', () => {
     assert.match(html, /1 new report since X\./);
   });
 
-  it('groups reports by company name, newest first within a group', () => {
+  it('groups reports by company name (with a per-company count), newest first within a group', () => {
     const reports = [
       { lei: 'LEI1', title: 'Older', category: 'NAV', publishedAt: '2026-01-01T00:00:00Z', url: null },
       { lei: 'LEI1', title: 'Newer', category: 'NAV', publishedAt: '2026-01-02T00:00:00Z', url: null },
     ];
     const html = buildDigestHtml(reports, prefs, 'since X');
-    assert.match(html, /<h3>Company One<\/h3>/);
+    assert.match(html, /<h3[^>]*>Company One[\s\S]{0,80}\(2 reports\)/);
     assert.ok(html.indexOf('Newer') < html.indexOf('Older'), 'newest report should render before the older one');
+  });
+
+  it('singularises the per-company count for exactly one report', () => {
+    const html = buildDigestHtml([{ lei: 'LEI1', title: 'T', category: 'NAV', publishedAt: '2026-01-01T00:00:00Z' }], prefs, 'since X');
+    assert.match(html, /<h3[^>]*>Company One[\s\S]{0,80}\(1 report\)/);
+  });
+
+  it('omits the summary tables for a single company with a single report type', () => {
+    const html = buildDigestHtml([{ lei: 'LEI1', title: 'T', category: 'NAV', publishedAt: '2026-01-01T00:00:00Z' }], prefs, 'since X');
+    assert.ok(!html.includes('<table'), 'a one-company, one-type digest has nothing for a summary to add');
+  });
+
+  it('adds company and report-type summary tables once there is more than one of either', () => {
+    const multiCompanyPrefs = {
+      LEI1: { name: 'Company One', categories: [] },
+      LEI2: { name: 'Company Two', categories: [] },
+    };
+    const reports = [
+      { lei: 'LEI1', title: 'A', category: 'NAV', publishedAt: '2026-01-01T00:00:00Z' },
+      { lei: 'LEI1', title: 'B', category: 'NAV', publishedAt: '2026-01-02T00:00:00Z' },
+      { lei: 'LEI2', title: 'C', category: 'Dividend Declaration', publishedAt: '2026-01-01T00:00:00Z' },
+    ];
+    const html = buildDigestHtml(reports, multiCompanyPrefs, 'since X');
+    assert.match(html, /Company One[\s\S]*?<td[^>]*>2<\/td>/);
+    assert.match(html, /NAV[\s\S]*?<td[^>]*>2<\/td>/);
+    assert.match(html, /Dividend Declaration[\s\S]*?<td[^>]*>1<\/td>/);
+    // The company with more reports should be listed first in the summary.
+    assert.ok(html.indexOf('Company One') < html.indexOf('Company Two'));
   });
 
   it('links the title when a report has a url, and escapes untrusted text', () => {
     const reports = [{ lei: 'LEI1', title: '<script>alert(1)</script>', category: 'NAV', publishedAt: '2026-01-01T00:00:00Z', url: 'https://example.com/x' }];
     const html = buildDigestHtml(reports, prefs, 'since X');
     assert.ok(!html.includes('<script>alert(1)</script>'), 'a raw script tag must never appear unescaped');
-    assert.match(html, /<a href="https:\/\/example\.com\/x">&lt;script&gt;/);
+    assert.match(html, /<a href="https:\/\/example\.com\/x"[^>]*>&lt;script&gt;/);
   });
 
   it('falls back to the LEI itself as a heading when no name is known', () => {
     const html = buildDigestHtml([{ lei: 'UNKNOWNLEI', title: 'T', category: 'NAV', publishedAt: '2026-01-01T00:00:00Z' }], {}, 'since X');
-    assert.match(html, /<h3>UNKNOWNLEI<\/h3>/);
+    assert.match(html, /<h3[^>]*>UNKNOWNLEI[\s\S]{0,80}\(1 report\)/);
   });
 });
 
