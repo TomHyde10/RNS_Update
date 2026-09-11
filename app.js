@@ -1040,7 +1040,12 @@ async function loadReports() {
     // the headline count in prose. "Last updated" itself lives with the
     // Refresh button in the header instead, not here.
     const cachedCount = (data.cachedLeis || []).length;
-    const nsmCount = activeWatchlist.length - cachedCount;
+    // A delta fetch still hit NSM, just for the gap since it was last
+    // cached rather than a full re-fetch - broken out from a plain "loaded
+    // from NSM" company so the status line reflects that most of that
+    // company's reports actually came from the cache/db too.
+    const deltaCount = (data.deltaLeis || []).length;
+    const nsmCount = activeWatchlist.length - cachedCount - deltaCount;
     // "db" only when a cache hit is genuinely Postgres-backed (survives a
     // restart) - otherwise it's the in-memory fallback (DATABASE_URL isn't
     // set), which "db" would misleadingly imply is persistent when it isn't.
@@ -1048,10 +1053,11 @@ async function loadReports() {
     const refreshedAt = new Date().toLocaleTimeString();
     const newCount = !isBaseline ? newReports.length : 0;
     const keywordNote = data.keyword ? ` or mentioning "${escapeHtml(data.keyword)}"` : '';
+    const deltaNote = deltaCount ? `, ${deltaCount} updated from NSM` : '';
     statusEl.innerHTML = `
       <span class="stat-figure">${data.count}</span> report${data.count === 1 ? '' : 's'}${newCount ? ` <span class="stat-new">${newCount} new</span>` : ''}
       <span class="stat-meta">last ${data.days} day${data.days === 1 ? '' : 's'} · ${activeWatchlist.length} compan${activeWatchlist.length === 1 ? 'y' : 'ies'} · ${data.scanned} scanned · matching ${escapeHtml(data.categories.join(', '))}${keywordNote}</span>
-      <span class="stat-meta stat-source">${cachedCount} compan${cachedCount === 1 ? 'y' : 'ies'} loaded from ${cacheLabel}, ${nsmCount} loaded from NSM</span>
+      <span class="stat-meta stat-source">${cachedCount} compan${cachedCount === 1 ? 'y' : 'ies'} loaded from ${cacheLabel}${deltaNote}, ${nsmCount} loaded from NSM</span>
     `;
 
     const lastUpdatedEl = document.getElementById('last-updated');
