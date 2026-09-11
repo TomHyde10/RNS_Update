@@ -10,6 +10,24 @@ const { buildRssFeed } = require('./lib/buildFeed');
 const { sendNotification } = require('./lib/sendNotification');
 const watchlist = require('./config/watchlist');
 
+// Some platforms (e.g. Northflank on certain plans) only support mounting
+// secret *files* into the container, not secret environment variables. For
+// each of these optional config values, if a real env var isn't already
+// set, fall back to reading one from a file named after it under
+// SECRET_FILE_DIR (default /etc/secrets) - the file's whole trimmed content
+// becomes the value. Mount your secret file at e.g. /etc/secrets/RESEND_API_KEY
+// (exact name, no extension) in the platform's UI and this picks it up with
+// no environment variable needed at all. A real env var, if set, always wins.
+const SECRET_FILE_DIR = process.env.SECRET_FILE_DIR || '/etc/secrets';
+for (const key of ['RESEND_API_KEY', 'NOTIFY_EMAIL_FROM', 'NOTIFY_EMAIL_TO', 'DATABASE_URL']) {
+  if (process.env[key]) continue;
+  try {
+    process.env[key] = fs.readFileSync(path.join(SECRET_FILE_DIR, key), 'utf8').trim();
+  } catch {
+    // No secret file for this key - leave it unset, same as not configuring it.
+  }
+}
+
 const PORT = process.env.PORT || 3000;
 
 const STATIC_FILES = {

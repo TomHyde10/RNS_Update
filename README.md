@@ -214,6 +214,25 @@ so it works the same way here: no serverless function support needed,
    notifications" above; Northflank has no blueprint file to pre-fill these
    like Render's, so set both yourself.
 
+### Secret files instead of secret variables
+
+Some Northflank plans/projects only offer **Secret Files** (mount a file
+into the container), not individual **Secret Variables**. `server.js`
+handles this itself: for `RESEND_API_KEY`, `NOTIFY_EMAIL_FROM`,
+`NOTIFY_EMAIL_TO`, and `DATABASE_URL`, if the real environment variable
+isn't set, it falls back to reading a file named exactly after that
+variable under `/etc/secrets` (e.g. `/etc/secrets/RESEND_API_KEY`) and uses
+its trimmed contents as the value — no environment variable needed at all.
+
+To use this: in Northflank, create a secret file per credential you need,
+with the **mount path set to `/etc/secrets/<VARIABLE_NAME>`** (matching the
+name exactly, no file extension) and the file's **content set to just the
+raw value** (e.g. the file at `/etc/secrets/RESEND_API_KEY` contains only
+`re_your_api_key`, nothing else). A real environment variable, if you're
+later able to set one, always takes priority over the file for the same
+name. Override the base directory with `SECRET_FILE_DIR` if you'd rather
+mount your files somewhere other than `/etc/secrets`.
+
 ### Optional: Postgres addon for the persistent cache
 
 If you also want the Postgres-backed NSM cache (see "Persistent cache
