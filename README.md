@@ -312,9 +312,8 @@ Content-Type: application/json
 ```
 
 - **`company_lei` genuinely filters server-side** — confirmed by a real
-  response where every hit matched the requested LEI. This is the opposite
-  of what we found with Ticker's `isins` param, and it's why the app makes
-  **one request per watched company** (`fetchForLei()` in
+  response where every hit matched the requested LEI. That's why the app
+  makes **one request per watched company** (`fetchForLei()` in
   `lib/fetchReports.js`) instead of paginating the whole market feed.
 - The response is a raw Elasticsearch result (`hits.hits[]._source`), also
   confirmed from a real capture. Report type is the `type` field — exact
@@ -400,9 +399,9 @@ the connection is still encrypted, just not certificate-verified).
   company with unusually heavy filing activity in the selected window could
   still exceed it and silently miss older items.
 - The debug panel ("All items returned in this period") shows every item
-  for every watched company, un-truncated — safe to leave on since it's no
-  longer a market-wide dump like the old Ticker version could produce, but
-  a long time period with many watched companies could make it sizeable.
+  for every watched company, un-truncated — safe to leave on since it's
+  scoped to your own watchlist rather than a market-wide dump, but a long
+  time period with many watched companies could still make it sizeable.
 - **Report-type matching is exact and case-insensitive**, not a substring
   match — typing `Half-year` alone won't match `"Half-year Financial
   Report"`. Type (or paste) the full category name as it appears in a real
