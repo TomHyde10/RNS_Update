@@ -108,9 +108,20 @@ company directly by LEI via the main form if you already know it.
 ### Email notifications
 
 Each report in the list has a **Send Notification** button that emails a
-summary of that report (company, title, type, publish date, link) on click.
-It's manual/on-demand for now — nothing is sent automatically when a new
-report appears.
+summary of that report (company, title, type, publish date, link) on click,
+with the linked document attached as a PDF when the report has one. It's
+manual/on-demand for now — nothing is sent automatically when a new report
+appears.
+
+The attachment uses Resend's `path` attachment option — Resend fetches the
+document itself server-side from the report's `url` (NSM's document links
+are public, no auth needed), rather than this app downloading and
+re-uploading it. Filename is taken from the URL when it looks like a real
+filename, otherwise falls back to `report.pdf` (`filenameFromUrl()` in
+`lib/sendNotification.js`). Resend caps attachments at 40MB per email; what
+happens for an oversized or unreachable document (the whole send fails, or
+the attachment is silently dropped) isn't confirmed from this environment —
+first real oversized/broken link is the test.
 
 Sending goes through the [Resend](https://resend.com) API via their
 official Node SDK (`lib/sendNotification.js`, `/api/notify`), not SMTP. It's
