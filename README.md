@@ -170,6 +170,17 @@ after you configure credentials is effectively the integration test.
    be anything as long as you're using a verified domain in step 2 (stays
    restricted to your own signup address if you used the sandbox sender).
 
+#### This deployment's setup
+
+`trusts.tomhyde.co.uk` is verified with Resend (DKIM/SPF/DMARC records
+added, sending enabled) — no longer restricted to the sandbox sender or a
+single recipient. `NOTIFY_EMAIL_FROM` should be set to
+`notify@trusts.tomhyde.co.uk` (as a Northflank secret file at
+`/etc/secrets/NOTIFY_EMAIL_FROM`, per "Secret files instead of secret
+variables" below) alongside `RESEND_API_KEY`. Once both are set, the
+recipient in the app itself can be any address, not just the Resend
+account's own signup email.
+
 ## Deploying (Vercel)
 
 This repo needs no build step — Vercel's zero-config Node setup serves the
