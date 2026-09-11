@@ -37,35 +37,95 @@ let autoRefreshTimer = null;
 let currentHistoryLei = null;
 let currentHistoryName = null;
 
+// Where the watchlist actually lives: 'server' once DATABASE_URL is set on
+// this deployment (shared across every visitor, survives everything - see
+// lib/watchlistStore.js), or 'local' (this browser's localStorage only)
+// otherwise. Decided once at startup by initWatchlist() below.
+// loadWatchlist() itself stays a plain synchronous read of this in-memory
+// cache regardless of backend, so the many existing call sites throughout
+// this file don't need to change - only the handful of functions that
+// populate or persist it do (this block, plus initWatchlist()).
+let watchlistCache = [];
+let watchlistBackend = 'local';
+
 function loadWatchlist() {
+  return watchlistCache;
+}
+
+// Drops entries left over from before the ISIN->LEI rename (they carry an
+// `isin` field instead of `lei` and would otherwise render as
+// "(undefined)" with no way to recover the LEI automatically) or any other
+// entry missing a validly-formed LEI.
+function cleanWatchlist(list) {
+  return Array.isArray(list) ? list.filter((c) => c && typeof c.lei === 'string' && LEI_RE.test(c.lei.toUpperCase())) : [];
+}
+
+function loadWatchlistFromLocalStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    const list = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(list)) return [];
-
-    // Drop entries left over from before the ISIN->LEI rename (they carry
-    // an `isin` field instead of `lei` and would otherwise render as
-    // "(undefined)" with no way to recover the LEI automatically) or any
-    // other entry missing a validly-formed LEI.
-    const cleaned = list.filter((c) => c && typeof c.lei === 'string' && LEI_RE.test(c.lei.toUpperCase()));
-    if (cleaned.length !== list.length) saveWatchlist(cleaned);
-    return cleaned;
+    return cleanWatchlist(raw ? JSON.parse(raw) : []);
   } catch {
     return [];
   }
 }
 
+// Full-list replace either way, matching lib/watchlistStore.js's
+// replaceCompanies() contract exactly: every caller already follows
+// "load the list, mutate it locally, call saveWatchlist(list) with the
+// whole thing" (add/rename/toggle/remove/bulk-add/import alike), so this
+// is the only function that needed to become backend-aware - none of
+// those callers had to change.
 function saveWatchlist(list) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+  watchlistCache = list;
+  if (watchlistBackend === 'server') {
+    fetch('/api/companies', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ companies: list }),
+    }).catch((err) => console.error('Failed to save watchlist:', err));
+  } else {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+  }
+}
+
+// Decides which backend the watchlist lives in and populates the initial
+// in-memory cache from it, then merges in the server's default companies
+// (see mergeDefaultsIntoWatchlist below) exactly as before.
+async function initWatchlist() {
+  try {
+    const res = await fetch('/api/companies');
+    const { ok, data } = await parseJsonResponse(res);
+    if (ok && data.enabled) {
+      watchlistBackend = 'server';
+      watchlistCache = cleanWatchlist(data.companies);
+
+      // First time this deployment's database is used, migrate whatever
+      // this browser already had in localStorage instead of silently
+      // starting the shared list empty.
+      if (watchlistCache.length === 0) {
+        const local = loadWatchlistFromLocalStorage();
+        if (local.length > 0) saveWatchlist(local);
+      }
+    } else {
+      watchlistBackend = 'local';
+      watchlistCache = loadWatchlistFromLocalStorage();
+    }
+  } catch {
+    watchlistBackend = 'local';
+    watchlistCache = loadWatchlistFromLocalStorage();
+  }
+
+  await mergeDefaultsIntoWatchlist();
 }
 
 // Ensures the server's default companies (config/watchlist.js, via
 // /api/watchlist) are present every time the page starts up, not just on
 // first visit - any missing default is merged back in on every load, so
-// removing one via the UI only lasts until the next reload. Companies you've
-// added beyond the defaults are left untouched either way. If the fetch
-// fails, this just leaves whatever's already in localStorage alone.
-async function initWatchlist() {
+// removing one via the UI only lasts until the next reload. Companies
+// you've added beyond the defaults are left untouched either way. If the
+// fetch fails, this just leaves the watchlist as initWatchlist() already
+// found it.
+async function mergeDefaultsIntoWatchlist() {
   try {
     const res = await fetch('/api/watchlist');
     if (!res.ok) return;
@@ -89,7 +149,7 @@ async function initWatchlist() {
 
     if (merged.length !== existing.length) saveWatchlist(merged);
   } catch {
-    // Leave localStorage as-is - proceed with whatever's already there.
+    // Leave the watchlist as-is - proceed with whatever's already there.
   }
 }
 
@@ -901,17 +961,22 @@ async function loadReports() {
     // the headline count in prose. "Last updated" itself lives with the
     // Refresh button in the header instead, not here.
     const cachedCount = (data.cachedLeis || []).length;
+    const nsmCount = activeWatchlist.length - cachedCount;
+    // "db" only when a cache hit is genuinely Postgres-backed (survives a
+    // restart) - otherwise it's the in-memory fallback (DATABASE_URL isn't
+    // set), which "db" would misleadingly imply is persistent when it isn't.
+    const cacheLabel = data.cacheBackend === 'postgres' ? 'db' : 'memory';
     const refreshedAt = new Date().toLocaleTimeString();
     const newCount = !isBaseline ? newReports.length : 0;
     const keywordNote = data.keyword ? ` or mentioning "${escapeHtml(data.keyword)}"` : '';
     statusEl.innerHTML = `
       <span class="stat-figure">${data.count}</span> report${data.count === 1 ? '' : 's'}${newCount ? ` <span class="stat-new">${newCount} new</span>` : ''}
       <span class="stat-meta">last ${data.days} day${data.days === 1 ? '' : 's'} · ${activeWatchlist.length} compan${activeWatchlist.length === 1 ? 'y' : 'ies'} · ${data.scanned} scanned · matching ${escapeHtml(data.categories.join(', '))}${keywordNote}</span>
+      <span class="stat-meta stat-source">${cachedCount} compan${cachedCount === 1 ? 'y' : 'ies'} loaded from ${cacheLabel}, ${nsmCount} loaded from NSM</span>
     `;
 
     const lastUpdatedEl = document.getElementById('last-updated');
     lastUpdatedEl.textContent = `Updated ${refreshedAt}`;
-    lastUpdatedEl.title = cachedCount ? `${cachedCount} of ${activeWatchlist.length} compan${activeWatchlist.length === 1 ? 'y' : 'ies'} from cache` : '';
 
     document.getElementById('mark-seen').hidden = lastNewKeys.size === 0;
 
@@ -1320,6 +1385,23 @@ function setCategoryForAllTrusts(category, checked) {
   renderNotificationsMatrix(subscription);
 }
 
+// The master "select everything" action - every category for every trust
+// in one click, rather than clicking each of the six category chips (or
+// each trust's own row checkbox) in turn.
+function setAllCategoriesForAllTrusts(checked) {
+  const subscription = currentSubscription();
+  if (!subscription) return;
+  for (const company of loadWatchlist()) {
+    if (checked) {
+      subscription.prefs[company.lei] = { name: company.name || company.lei, categories: [...NOTIFICATION_CATEGORIES] };
+    } else {
+      delete subscription.prefs[company.lei];
+    }
+  }
+  saveCurrentSubscription();
+  renderNotificationsMatrix(subscription);
+}
+
 // The bulk-apply chips above the list are static (never re-created), so
 // their active/disabled state is refreshed here on every render instead of
 // re-wiring listeners each time - those are attached once, further down.
@@ -1327,8 +1409,11 @@ function setCategoryForAllTrusts(category, checked) {
 // there's no third visual state for "some but not all" (unlike the row/
 // list checkboxes below, which do show indeterminate) since a chip's own
 // click always means "make this true everywhere", not "toggle this cell".
+// The master "select all" chip has no data-category of its own (it isn't
+// one of the per-category loop below) - handled separately since its
+// active state depends on every category for every trust, not just one.
 function updateNotificationsBulkChips(subscription, watchlist) {
-  document.querySelectorAll('.notifications-bulk-chip').forEach((chip) => {
+  document.querySelectorAll('.notifications-bulk-chip[data-category]').forEach((chip) => {
     if (watchlist.length === 0) {
       chip.classList.remove('is-active');
       chip.disabled = true;
@@ -1341,6 +1426,19 @@ function updateNotificationsBulkChips(subscription, watchlist) {
     }).length;
     chip.classList.toggle('is-active', selectedCount === watchlist.length);
   });
+
+  const selectAllChip = document.getElementById('notifications-select-all');
+  if (watchlist.length === 0) {
+    selectAllChip.classList.remove('is-active');
+    selectAllChip.disabled = true;
+  } else {
+    selectAllChip.disabled = false;
+    const everyTrustFullySelected = watchlist.every((c) => {
+      const categories = (subscription.prefs[c.lei] && subscription.prefs[c.lei].categories) || [];
+      return categories.length === NOTIFICATION_CATEGORIES.length;
+    });
+    selectAllChip.classList.toggle('is-active', everyTrustFullySelected);
+  }
 }
 
 // One collapsed line per trust by default - just its name, an "all types"
@@ -1584,10 +1682,14 @@ document.getElementById('notifications-close').addEventListener('click', () => {
 // Mirrors clicking a native indeterminate/unchecked checkbox: not every
 // trust has it yet -> select it for all of them; already active -> clear
 // it from all of them.
-document.querySelectorAll('.notifications-bulk-chip').forEach((chip) => {
+document.querySelectorAll('.notifications-bulk-chip[data-category]').forEach((chip) => {
   chip.addEventListener('click', () => {
     setCategoryForAllTrusts(chip.dataset.category, !chip.classList.contains('is-active'));
   });
+});
+
+document.getElementById('notifications-select-all').addEventListener('click', (e) => {
+  setAllCategoriesForAllTrusts(!e.currentTarget.classList.contains('is-active'));
 });
 
 document.getElementById('notifications-email-add').addEventListener('click', async () => {
@@ -1622,8 +1724,12 @@ document.getElementById('notifications-email-add').addEventListener('click', asy
   initWatchlistCollapse();
   initSettingsCollapse();
   initSidebarResize();
-  await adoptUrlParams();
+  // initWatchlist() first: it decides which backend the watchlist lives
+  // in and populates the in-memory cache from it - adoptUrlParams() below
+  // reads/writes that same cache (merging any LEIs from a shared link),
+  // so it needs that cache populated first, not the other way around.
   await initWatchlist();
+  await adoptUrlParams();
   initSettingsForm();
   initAutoRefreshControl();
   initReportControls();

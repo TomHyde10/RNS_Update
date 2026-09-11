@@ -538,6 +538,40 @@ overrides both settings.
   which is `MAX_WINDOW_DAYS` in `lib/fetchReports.js` — it shows everything
   NSM will return for that window, not literally all-time history.
 
+## Testing
+
+```
+npm test
+```
+
+Runs `node --test test/` (Node's built-in test runner - no extra dependency
+needed). Covers the automatic email digest system end to end:
+
+- `test/digestScheduler.test.js` - the due-check/send loop (`lib/digestScheduler.js`),
+  against a fake in-memory store and a fake sender. No network, no database.
+- `test/sendDigest.test.js` - digest-window calculation, per-trust/per-category
+  matching, HTML building, and the recipient security gate (`digestSendAllowed`),
+  all pure functions in `lib/sendDigest.js`.
+- `test/subscriptionsApi.test.js` - the real `/api/subscriptions*` routes in
+  `server.js`, hit as real HTTP requests against a real (in-process) server -
+  only `lib/subscriptionStore.js` is swapped for an in-memory fake, so this
+  never touches Postgres.
+- `test/subscriptionStore.test.js` - real CRUD against Postgres. **Skipped by
+  default.** Set `TEST_DATABASE_URL` to a disposable database to run it:
+  ```
+  TEST_DATABASE_URL=postgres://user:pass@host:5432/dbname npm test
+  ```
+  Deliberately a separate env var from `DATABASE_URL` (which your own shell
+  or `.env` might have set for running the app itself), so this suite can
+  never accidentally run against a real database just because one happens
+  to be configured - only ever the one you explicitly hand it here. It
+  cleans up the rows it creates, but should still only ever point at
+  something disposable, never production.
+
+Nothing else in the app (the NSM integration, the frontend, CSV/RSS export,
+manual "Send Notification") has automated coverage yet - this suite is
+scoped specifically to the recurring-digest system.
+
 ## Project layout
 
 ```

@@ -21,11 +21,14 @@ services:
       # secret once, so nothing sensitive is committed here either.
       - key: VIEW_TOKEN_SECRET
         generateValue: true
-      # Backs both the NSM result cache (lib/cacheStore.js) and automatic
-      # email digest subscriptions (lib/subscriptionStore.js) - the latter
-      # needs this database to exist at all, since a subscription has to
-      # survive process restarts to mean anything as "automatic". Wired
-      # automatically from the database block below.
+      # Backs the NSM result cache (lib/cacheStore.js), automatic email
+      # digest subscriptions (lib/subscriptionStore.js), and the shared
+      # company watchlist (lib/watchlistStore.js) - the latter two need
+      # this database to exist at all: a subscription has to survive
+      # process restarts to mean anything as "automatic", and a watchlist
+      # edit has to survive them (and work from any browser/device) to be
+      # genuinely permanent rather than trapped in one browser's
+      # localStorage. Wired automatically from the database block below.
       - key: DATABASE_URL
         fromDatabase:
           name: rns-update-db

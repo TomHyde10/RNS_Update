@@ -97,17 +97,17 @@
         <div class="reports-header-actions">
           <a id="feed-link" href="#" target="_blank" rel="noopener" title="Subscribe in a feed reader">RSS feed</a>
           <button type="button" id="export-csv">Download CSV</button>
+          <select id="sort-select">
+            <option value="date-desc">Newest first</option>
+            <option value="date-asc">Oldest first</option>
+            <option value="company-asc">Company A-Z</option>
+            <option value="company-desc">Company Z-A</option>
+          </select>
           <button type="button" id="mark-seen" hidden>Mark all as seen</button>
         </div>
       </div>
       <div id="reports-controls">
         <input type="text" id="report-filter" placeholder="Filter by company or title…" autocomplete="off" />
-        <select id="sort-select">
-          <option value="date-desc">Newest first</option>
-          <option value="date-asc">Oldest first</option>
-          <option value="company-asc">Company A-Z</option>
-          <option value="company-desc">Company Z-A</option>
-        </select>
       </div>
       <div class="reports-table-wrap">
         <table class="reports-table">
@@ -214,6 +214,7 @@
 
         <div class="notifications-bulk-row">
           <span class="notifications-bulk-label">Apply to every trust:</span>
+          <button type="button" id="notifications-select-all" class="notifications-bulk-chip notifications-select-all" title="Select every report type for every trust">All types, all trusts</button>
           <button type="button" class="notifications-bulk-chip" data-category="Half-year Financial Report">Half-year</button>
           <button type="button" class="notifications-bulk-chip" data-category="Annual Financial Report">Annual</button>
           <button type="button" class="notifications-bulk-chip" data-category="Net Asset Value(s)">NAV</button>

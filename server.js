@@ -25,7 +25,7 @@ for (const key of ['RESEND_API_KEY', 'NOTIFY_EMAIL_FROM', 'NOTIFY_EMAIL_TO', 'DA
   }
 }
 
-const { fetchReports } = require('./lib/fetchReports');
+const { fetchReports, LEI_RE } = require('./lib/fetchReports');
 const { buildRssFeed } = require('./lib/buildFeed');
 const { sendNotification } = require('./lib/sendNotification');
 const watchlist = require('./config/watchlist');
@@ -33,6 +33,8 @@ const { checkBasicAuth, REALM } = require('./lib/basicAuth');
 const { sealView, openView, resolveReportQuery } = require('./lib/viewToken');
 const subscriptionStore = require('./lib/subscriptionStore');
 const { digestSendAllowed, sendDigestForSubscription } = require('./lib/sendDigest');
+const digestScheduler = require('./lib/digestScheduler');
+const watchlistStore = require('./lib/watchlistStore');
 
 const PORT = process.env.PORT || 3000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -130,6 +132,56 @@ const server = http.createServer(async (req, res) => {
   if (parsed.pathname === '/api/watchlist') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ companies: watchlist }));
+    return;
+  }
+
+  // The user's actual, editable watchlist (distinct from the hardcoded
+  // defaults above) - shared across every visitor once DATABASE_URL is
+  // set, so a rename/add/remove is permanent regardless of device or
+  // browser. app.js falls back to localStorage itself when `enabled` is
+  // false here, exactly like the notification subscriptions' own
+  // enabled/disabled split.
+  if (parsed.pathname === '/api/companies' && req.method === 'GET') {
+    if (!watchlistStore.enabled) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ enabled: false, companies: [] }));
+      return;
+    }
+    try {
+      const companies = await watchlistStore.listCompanies();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ enabled: true, companies }));
+    } catch (err) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Failed to load companies: ${err.message || err}` }));
+    }
+    return;
+  }
+
+  // Full-list replace, matching the client's own saveWatchlist(list)
+  // exactly - the whole desired list is sent every time (add/rename/
+  // toggle/remove/bulk-add/import all go through this one call), rather
+  // than one endpoint per kind of edit.
+  if (parsed.pathname === '/api/companies' && req.method === 'PUT') {
+    readJsonBody(req, res, async (body) => {
+      if (!watchlistStore.enabled) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'A shared watchlist needs a database on this deployment (DATABASE_URL is not set).' }));
+        return;
+      }
+      const list = Array.isArray(body.companies) ? body.companies : [];
+      const valid = list
+        .filter((c) => c && typeof c.lei === 'string' && LEI_RE.test(c.lei.toUpperCase()))
+        .map((c) => ({ lei: c.lei.toUpperCase(), name: typeof c.name === 'string' ? c.name.trim() : '', enabled: c.enabled !== false }));
+      try {
+        const companies = await watchlistStore.replaceCompanies(valid);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ companies }));
+      } catch (err) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Failed to save companies: ${err.message || err}` }));
+      }
+    });
     return;
   }
 
@@ -315,38 +367,28 @@ const server = http.createServer(async (req, res) => {
 // stays alive between requests - see the "truly automatic" tradeoff noted
 // in lib/subscriptionStore.js. A subscription's own due-ness is time-based
 // (last_sent_at + its frequency), so a missed or delayed tick just sends
-// slightly late rather than skipping content.
-async function runDueDigests() {
-  if (!subscriptionStore.enabled) return;
-
-  let subscriptions;
-  try {
-    subscriptions = await subscriptionStore.listSubscriptions();
-  } catch (err) {
-    console.error('Failed to load subscriptions for digest run:', err.message || err);
-    return;
-  }
-
-  const now = Date.now();
-  for (const subscription of subscriptions) {
-    if (!subscription.frequencyMinutes) continue; // paused
-    const lastSentMs = subscription.lastSentAt ? new Date(subscription.lastSentAt).getTime() : 0;
-    if (now < lastSentMs + subscription.frequencyMinutes * 60 * 1000) continue;
-
-    try {
-      const result = await sendDigestForSubscription(subscription);
-      await subscriptionStore.markSent(subscription.id, new Date());
-      if (result.sent) console.log(`Digest sent to ${subscription.email}: ${result.count} report(s).`);
-    } catch (err) {
-      console.error(`Digest failed for ${subscription.email}:`, err.message || err);
-    }
-  }
+// slightly late rather than skipping content. The actual due-check/send
+// logic lives in lib/digestScheduler.js (unit-tested there against a fake
+// store and sender) - this just supplies the real ones.
+function runDueDigests() {
+  return digestScheduler.runDueDigests({ subscriptionStore, sendDigestForSubscription });
 }
 
 server.listen(PORT, () => {
   console.log(`RNS Update running at http://localhost:${PORT}`);
   if (subscriptionStore.enabled) {
-    setInterval(runDueDigests, DIGEST_CHECK_INTERVAL_MS);
+    // unref() so this timer alone can't keep the process alive - in normal
+    // operation the still-listening HTTP server already does that; this
+    // just stops the interval from being a second, redundant reason to
+    // stay up (and from blocking a clean exit in test/subscriptionsApi.test.js,
+    // which closes the server between test files but has no handle on
+    // this timer to clear otherwise).
+    setInterval(runDueDigests, DIGEST_CHECK_INTERVAL_MS).unref();
     runDueDigests(); // catch up on anything due right after a cold start
   }
 });
+
+// Not used by the app itself (nothing else requires this file) - only so
+// test/subscriptionsApi.test.js can await the real `listening` event
+// instead of guessing with a timeout before firing requests at it.
+module.exports = { server };

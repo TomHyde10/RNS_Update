@@ -166,6 +166,11 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
 
 .hint { color: var(--muted); font-size: 0.8rem; margin: 0.4rem 0; }
 
+/* Both plain-text lines within #notifications-body's flex column - see the
+   flex-shrink: 0 comment on .notifications-email-list above for why this
+   matters here too, not just for cosmetic spacing. */
+#notifications-status, #notifications-editing-label { flex-shrink: 0; }
+
 /* Two-column layout: sidebar (companies + settings) beside the reports
    list, instead of everything stacked in one narrow column. Collapses to a
    single column below the tablet breakpoint. */
@@ -827,6 +832,7 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   display: flex;
   gap: 0.5rem;
   margin-top: 0.75rem;
+  flex-shrink: 0;
 }
 
 .notifications-add-row input {
@@ -852,6 +858,15 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   margin: 0.5rem 0 0;
   max-height: 9rem;
   overflow-y: auto;
+  /* #notifications-body is a flex column (see the comment above it) whose
+     only intentionally-shrinking child is .notifications-matrix-wrap - a
+     plain flex item like this one defaults to flex-shrink: 1 too, so
+     without this it would get squeezed below even one row's own content
+     height whenever the overlay's total content neared the 85vh cap,
+     rather than the matrix (which has its own scroll for exactly this)
+     giving way instead. Rows would then overflow past this list's own
+     shrunken box into whatever comes after it. */
+  flex-shrink: 0;
 }
 
 .notifications-email-row {
@@ -912,6 +927,7 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   gap: 0.4rem;
   flex-wrap: wrap;
   margin-top: 0.75rem;
+  flex-shrink: 0;
 }
 
 .notifications-bulk-label { font-size: 0.78rem; color: var(--muted); margin-right: 0.2rem; }
@@ -927,6 +943,11 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   color: var(--bg);
   font-weight: 600;
 }
+
+/* The master "everything" action, visually set apart from the six
+   single-category chips beside it (font-weight when inactive; the shared
+   .is-active fill above still applies once every trust has everything). */
+.notifications-select-all { font-weight: 600; border-color: var(--fg); }
 
 .notifications-matrix-wrap {
   margin-top: 0.75rem;

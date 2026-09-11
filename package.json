@@ -4,7 +4,8 @@
   "private": true,
   "description": "Lightweight site that pulls half-year/annual report disclosures for a watchlist of companies from the FCA's National Storage Mechanism.",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test test/"
   },
   "engines": {
     "node": ">=18"
