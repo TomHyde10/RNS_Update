@@ -287,6 +287,19 @@ function escapeHtml(str) {
   }[c]));
 }
 
+// Report URLs come from NSM data, and escapeHtml() alone doesn't stop a
+// `javascript:` URL in an href from running script when clicked - so only
+// http(s) links are ever rendered as links. Returns null otherwise.
+function safeHref(url) {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url, window.location.href);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
 function renderWatchlist() {
   const listEl = document.getElementById('company-list');
   const watchlist = loadWatchlist();
@@ -472,8 +485,9 @@ function renderReportsList() {
     const tr = document.createElement('tr');
     tr.className = isNew ? 'report-row report-row-new' : 'report-row';
     const date = report.publishedAt ? new Date(report.publishedAt).toLocaleString() : 'Unknown date';
-    const titleHtml = report.url
-      ? `<a href="${escapeHtml(report.url)}" target="_blank" rel="noopener" class="report-title-link">${escapeHtml(report.title)}</a>`
+    const titleHref = safeHref(report.url);
+    const titleHtml = titleHref
+      ? `<a href="${escapeHtml(titleHref)}" target="_blank" rel="noopener" class="report-title-link">${escapeHtml(report.title)}</a>`
       : escapeHtml(report.title);
 
     tr.innerHTML = `
@@ -657,8 +671,9 @@ function renderHistoryItems(items, statusSuffix) {
   for (const item of items) {
     const li = document.createElement('li');
     const date = item.publishedAt ? new Date(item.publishedAt).toLocaleDateString() : 'Unknown date';
-    const typeHtml = item.url
-      ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.type || 'Unknown type')}</a>`
+    const typeHref = safeHref(item.url);
+    const typeHtml = typeHref
+      ? `<a href="${escapeHtml(typeHref)}" target="_blank" rel="noopener">${escapeHtml(item.type || 'Unknown type')}</a>`
       : escapeHtml(item.type || 'Unknown type');
     li.innerHTML = `
       <span class="history-date">${escapeHtml(date)}</span> ·

@@ -4,11 +4,6 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
-const { fetchReports } = require('./lib/fetchReports');
-const { buildRssFeed } = require('./lib/buildFeed');
-const { sendNotification } = require('./lib/sendNotification');
-const watchlist = require('./config/watchlist');
-const { checkBasicAuth, REALM } = require('./lib/basicAuth');
 
 // Some platforms (e.g. Northflank on certain plans) only support mounting
 // secret *files* into the container, not secret environment variables. For
@@ -18,8 +13,10 @@ const { checkBasicAuth, REALM } = require('./lib/basicAuth');
 // becomes the value. Mount your secret file at e.g. /etc/secrets/RESEND_API_KEY
 // (exact name, no extension) in the platform's UI and this picks it up with
 // no environment variable needed at all. A real env var, if set, always wins.
+// Runs before the lib/ requires below, since lib/cacheStore.js reads
+// DATABASE_URL at load time.
 const SECRET_FILE_DIR = process.env.SECRET_FILE_DIR || '/etc/secrets';
-for (const key of ['RESEND_API_KEY', 'NOTIFY_EMAIL_FROM', 'NOTIFY_EMAIL_TO', 'DATABASE_URL', 'APP_USERNAME', 'APP_PASSWORD']) {
+for (const key of ['RESEND_API_KEY', 'NOTIFY_EMAIL_FROM', 'NOTIFY_EMAIL_TO', 'DATABASE_URL', 'DATABASE_SSL_CA', 'APP_USERNAME', 'APP_PASSWORD']) {
   if (process.env[key]) continue;
   try {
     process.env[key] = fs.readFileSync(path.join(SECRET_FILE_DIR, key), 'utf8').trim();
@@ -27,6 +24,12 @@ for (const key of ['RESEND_API_KEY', 'NOTIFY_EMAIL_FROM', 'NOTIFY_EMAIL_TO', 'DA
     // No secret file for this key - leave it unset, same as not configuring it.
   }
 }
+
+const { fetchReports } = require('./lib/fetchReports');
+const { buildRssFeed } = require('./lib/buildFeed');
+const { sendNotification } = require('./lib/sendNotification');
+const watchlist = require('./config/watchlist');
+const { checkBasicAuth, REALM } = require('./lib/basicAuth');
 
 const PORT = process.env.PORT || 3000;
 
@@ -95,6 +98,17 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (parsed.pathname === '/api/notify' && req.method === 'POST') {
+    // Browsers resend cached Basic Auth credentials automatically, so a
+    // cross-site <form> post (text/plain, urlencoded, multipart - no CORS
+    // preflight) could otherwise trigger an email from a logged-in visitor.
+    // Requiring application/json forces a preflight, which never succeeds
+    // here (preflights carry no credentials, and no CORS headers are sent).
+    if ((req.headers['content-type'] || '').split(';')[0].trim().toLowerCase() !== 'application/json') {
+      res.writeHead(415, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Content-Type must be application/json' }));
+      return;
+    }
+
     let raw = '';
     req.on('data', (chunk) => { raw += chunk; });
     req.on('end', async () => {
@@ -106,8 +120,8 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: 'Invalid JSON body' }));
         return;
       }
-      const result = await sendNotification(body);
-      res.writeHead(result.ok ? 200 : 502, { 'Content-Type': 'application/json' });
+      const { status, ...result } = await sendNotification(body);
+      res.writeHead(result.ok ? 200 : status || 502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     });
     return;

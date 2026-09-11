@@ -126,13 +126,18 @@ split into two halves with different requirements:
   (or your shell for local dev) — there's no UI for them, and nothing is
   hardcoded or committed to the repo. If either is missing, clicking the
   button shows an error naming which one, rather than silently failing.
-- **Recipient address (per-browser, no deployment step needed):** the first
-  time you click Send Notification (or via the "Notification email" panel
-  in the sidebar), an overlay asks for the email that should receive
-  notifications and saves it to that browser's `localStorage` — it's then
-  sent as `to` on every subsequent notify request from that browser. Setting
-  `NOTIFY_EMAIL_TO` server-side is optional and only used as a fallback for
-  a request that doesn't supply its own `to`.
+- **Recipient address:** the first time you click Send Notification (or via
+  the "Notification email" panel in the sidebar), an overlay asks for the
+  email that should receive notifications and saves it to that browser's
+  `localStorage` — it's then sent as `to` on every subsequent notify request
+  from that browser. **That per-browser recipient is only honoured when
+  `APP_PASSWORD` is set** (see "Authentication") — otherwise anyone with the
+  URL could use `/api/notify` to send mail from your verified domain to any
+  address. Without `APP_PASSWORD`, emails only ever go to the server-side
+  `NOTIFY_EMAIL_TO` (required in that case), and a request naming any other
+  recipient is refused. With `APP_PASSWORD` set, `NOTIFY_EMAIL_TO` is
+  optional and only a fallback for a request that doesn't supply its own
+  `to`.
 
 This hasn't been exercised against the real Resend API from this environment
 (no network access here to verify it end-to-end) — the first real click
@@ -162,6 +167,8 @@ after you configure credentials is effectively the integration test.
    receive the notifications — independent of the Resend account, and can
    be anything as long as you're using a verified domain in step 2 (stays
    restricted to your own signup address if you used the sandbox sender).
+   This needs `APP_PASSWORD` set; without it, set `NOTIFY_EMAIL_TO` and
+   enter that same address.
 
 #### This deployment's setup
 
@@ -170,14 +177,17 @@ added, sending enabled) — no longer restricted to the sandbox sender or a
 single recipient. `NOTIFY_EMAIL_FROM` should be set to
 `notify@trusts.tomhyde.co.uk` (as a Northflank secret file at
 `/etc/secrets/NOTIFY_EMAIL_FROM`, per "Secret files instead of secret
-variables" below) alongside `RESEND_API_KEY`. Once both are set, the
-recipient in the app itself can be any address, not just the Resend
-account's own signup email.
+variables" below) alongside `RESEND_API_KEY`. With both set, plus
+`APP_PASSWORD` (e.g. `/etc/secrets/APP_PASSWORD`, which is what enables the
+in-app recipient), the recipient in the app itself can be any address, not
+just the Resend account's own signup email.
 
 ## Authentication
 
 By default the whole app — every page and API route, including
-`/api/notify` — is open to anyone with the URL, same as before. Set
+`/api/notify` — is open to anyone with the URL, same as before (though
+`/api/notify` then only sends to `NOTIFY_EMAIL_TO` — see "Email
+notifications"). Set
 `APP_PASSWORD` to require an HTTP Basic Auth login (the browser's own
 username/password popup, no custom login page) before anything loads.
 Username defaults to `admin`; set `APP_USERNAME` to change it.
@@ -189,9 +199,18 @@ This is enforced on every deployment method:
 - **Vercel** uses `middleware.js` at the repo root (Vercel Edge Middleware),
   which runs before both the static files and every `api/*.js` function.
   It's a separate, more restricted runtime from `server.js`'s plain Node
-  process (no `Buffer`, no filesystem), so it re-implements the same check
-  with only Web-standard APIs (`atob`) rather than importing
-  `lib/basicAuth.js` — keep the two in sync if this logic ever changes.
+  process (no `Buffer`, no Node `crypto`, no filesystem), so it
+  re-implements the same check with only Web-standard APIs (`atob`,
+  `TextDecoder`, `crypto.subtle`) rather than importing `lib/basicAuth.js`
+  — keep the two in sync if this logic ever changes.
+
+Both compare credentials as SHA-256 digests in constant time, so response
+timing doesn't reveal how close a guess was. `/api/notify` also rejects any
+POST whose `Content-Type` isn't `application/json`: browsers resend cached
+Basic Auth credentials automatically, so without that check another website
+could make a logged-in visitor's browser submit a hidden form that sends an
+email. A JSON content type forces a CORS preflight, which this app never
+approves.
 
 Set `APP_USERNAME`/`APP_PASSWORD` as environment variables the same way as
 any other secret in this project (or as secret files — see "Secret files
@@ -260,7 +279,8 @@ so it works the same way here: no serverless function support needed,
 Some Northflank plans/projects only offer **Secret Files** (mount a file
 into the container), not individual **Secret Variables**. `server.js`
 handles this itself: for `RESEND_API_KEY`, `NOTIFY_EMAIL_FROM`,
-`NOTIFY_EMAIL_TO`, and `DATABASE_URL`, if the real environment variable
+`NOTIFY_EMAIL_TO`, `DATABASE_URL`, `DATABASE_SSL_CA`, `APP_USERNAME`, and
+`APP_PASSWORD`, if the real environment variable
 isn't set, it falls back to reading a file named exactly after that
 variable under `/etc/secrets` (e.g. `/etc/secrets/RESEND_API_KEY`) and uses
 its trimmed contents as the value — no environment variable needed at all.
@@ -385,9 +405,15 @@ so deploying the Blueprint never silently provisions a database (and its
 
 Anywhere else (Neon, Supabase, your own Postgres, local dev), the same
 `DATABASE_URL` env var works the same way — this is a plain `pg.Pool`
-connection with `ssl: { rejectUnauthorized: false }` (the common pattern
-for providers whose certificate chain isn't in Node's default trust store;
-the connection is still encrypted, just not certificate-verified).
+connection over TLS, **with the server's certificate verified by default**.
+If your provider's certificate isn't signed by a CA in Node's default trust
+store, the cache logs a certificate error and falls back to fresh NSM
+fetches (reports still load). Fix that by setting `DATABASE_SSL_CA` to the
+provider's CA certificate (PEM text, as an env var or secret file). Only as
+a last resort, `DATABASE_SSL_VERIFY=false` skips verification: the
+connection is still encrypted, but anyone who can intercept it could
+impersonate the database. An `sslmode` parameter in `DATABASE_URL` itself
+overrides both settings.
 - **Batching multiple LEIs into a single request is untested.** The
   `company_lei` value array has only ever been sent/confirmed with one LEI;
   whether NSM's search accepts several at once (which would cut the
