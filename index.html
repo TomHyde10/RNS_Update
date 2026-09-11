@@ -73,17 +73,14 @@
             Other report types
             <input id="categories-other-input" type="text" autocomplete="off" placeholder="Comma-separated, exact category name" />
           </label>
-          <p class="hint">Matched exactly against the filing category (case-insensitive).</p>
 
           <label>
             Keyword
             <input id="keyword-input" type="text" autocomplete="off" placeholder="e.g. delisting, merger" />
           </label>
-          <p class="hint">Also includes filings whose title mentions this, regardless of the report types above.</p>
 
           <div class="settings-buttons">
             <button type="submit">Apply</button>
-            <button type="button" id="categories-reset">Reset</button>
           </div>
         </form>
       </details>
@@ -129,14 +126,47 @@
   <div id="history-overlay" class="overlay" hidden>
     <div class="overlay-card overlay-card-wide" role="dialog" aria-modal="true" aria-labelledby="history-title">
       <div class="overlay-header">
-        <h2 id="history-title">Filing history</h2>
+        <button type="button" id="history-back" class="overlay-back">&larr; Back</button>
         <div class="overlay-header-actions">
           <button type="button" id="history-refresh" title="Bypass the cache and re-fetch">Refresh</button>
-          <button type="button" id="history-close" class="overlay-close" aria-label="Close">&times;</button>
         </div>
       </div>
-      <p id="history-status" class="hint"></p>
+
+      <div class="history-company-info">
+        <h2 id="history-title">Filing history</h2>
+        <p id="history-lei" class="history-lei"></p>
+        <p id="history-status" class="hint"></p>
+      </div>
+
       <div id="history-activity" class="history-activity" hidden></div>
+
+      <div class="history-filters">
+        <label>
+          Date range
+          <select id="history-filter-days">
+            <option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option>
+            <option value="180">Last 180 days</option>
+            <option value="365" selected>Last 365 days</option>
+          </select>
+        </label>
+        <label>
+          Type
+          <select id="history-filter-type">
+            <option value="all" selected>All types</option>
+          </select>
+        </label>
+        <label>
+          Show
+          <select id="history-filter-limit">
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="all" selected>All</option>
+          </select>
+        </label>
+      </div>
+
       <ul id="history-list" class="history-list"></ul>
     </div>
   </div>
@@ -165,7 +195,7 @@
       </form>
       <p id="lei-error" class="error" hidden></p>
 
-      <p class="hint overlay-divider">Or paste multiple LEIs at once — extra surrounding text is fine, LEIs are detected automatically.</p>
+      <div class="overlay-divider"></div>
       <textarea id="bulk-add-input" rows="4" placeholder="e.g. a pasted list of LEIs, one per line or separated by commas/spaces"></textarea>
       <div class="settings-buttons">
         <button type="button" id="bulk-add-btn">Detect &amp; add</button>
@@ -197,7 +227,6 @@
         <h2 id="notifications-heading">Notifications</h2>
         <button type="button" id="notifications-close" class="overlay-close" aria-label="Close">&times;</button>
       </div>
-      <p class="hint">Each email address below gets its own collated digest - every matching report published since its last send, for the trusts and report types it's set to watch.</p>
 
       <p id="notifications-unavailable" class="hint" hidden>Automatic email digests need a database configured on this deployment (DATABASE_URL) - ask whoever manages it to set one up.</p>
 

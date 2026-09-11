@@ -36,6 +36,7 @@ let lastNewKeys = new Set();
 let autoRefreshTimer = null;
 let currentHistoryLei = null;
 let currentHistoryName = null;
+let currentHistoryItems = [];
 
 // Where the watchlist actually lives: 'server' once DATABASE_URL is set on
 // this deployment (shared across every visitor, survives everything - see
@@ -807,7 +808,7 @@ function renderReportsList() {
       : escapeHtml(report.title);
 
     tr.innerHTML = `
-      <td class="col-company">${escapeHtml(report.company)}</td>
+      <td class="col-company"><button type="button" class="company-link">${escapeHtml(report.company)}</button></td>
       <td class="col-title">${titleHtml}${isNew ? '<span class="pill pill-new">New</span>' : ''}</td>
       <td class="col-category">${escapeHtml(report.category || '')}</td>
       <td class="col-published">${escapeHtml(date)}</td>
@@ -818,6 +819,10 @@ function renderReportsList() {
         </div>
       </td>
     `;
+
+    tr.querySelector('.company-link').addEventListener('click', () => {
+      openHistoryOverlay(report.lei, report.company);
+    });
 
     tr.querySelector('.send-notification').addEventListener('click', async (e) => {
       const btn = e.currentTarget;
@@ -1134,18 +1139,51 @@ function renderHistoryActivity(items) {
   containerEl.hidden = false;
 }
 
-function renderHistoryItems(items, statusSuffix) {
-  const listEl = document.getElementById('history-list');
+// Builds the "Type" filter's options from whatever categories actually
+// appear in this company's own filing history, instead of the fixed
+// sidebar category list - a company that's never filed a "Dividend
+// Declaration" shouldn't offer it as a (permanently empty) choice here.
+// Keeps the current selection if it's still a valid option.
+function populateHistoryTypeFilter(items) {
+  const select = document.getElementById('history-filter-type');
+  const previous = select.value;
+  const types = [...new Set(items.map((item) => item.type).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
+  select.innerHTML = '<option value="all">All types</option>'
+    + types.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  select.value = types.includes(previous) ? previous : 'all';
+}
+
+// Applies the date range/type/quantity filter controls to the currently-
+// loaded 365-day item set and re-renders the chart, list, and status line -
+// entirely client-side, since every filing in range is already loaded, the
+// same "fetch once, filter locally" pattern the main report table uses.
+function renderHistoryView(statusSuffix = '') {
   const statusEl = document.getElementById('history-status');
+  const listEl = document.getElementById('history-list');
 
-  statusEl.textContent = (items.length
-    ? `${items.length} filing(s) in the last 365 days.`
-    : 'No filings found in the last 365 days.') + statusSuffix;
+  const days = parseInt(document.getElementById('history-filter-days').value, 10);
+  const type = document.getElementById('history-filter-type').value;
+  const limit = document.getElementById('history-filter-limit').value;
 
-  renderHistoryActivity(items);
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const matched = currentHistoryItems.filter((item) => {
+    const published = item.publishedAt ? new Date(item.publishedAt).getTime() : NaN;
+    if (Number.isNaN(published) || published < cutoff) return false;
+    return type === 'all' || item.type === type;
+  });
+
+  const dayLabel = { 30: 'last 30 days', 90: 'last 90 days', 180: 'last 180 days', 365: 'last 365 days' }[days] || `last ${days} days`;
+  statusEl.textContent = (matched.length
+    ? `${matched.length} filing${matched.length === 1 ? '' : 's'} in the ${dayLabel}.`
+    : `No filings found in the ${dayLabel}.`) + statusSuffix;
+
+  renderHistoryActivity(matched);
+
+  const shown = limit === 'all' ? matched : matched.slice(0, parseInt(limit, 10));
 
   listEl.innerHTML = '';
-  for (const item of items) {
+  for (const item of shown) {
     const li = document.createElement('li');
     const date = item.publishedAt ? new Date(item.publishedAt).toLocaleDateString() : 'Unknown date';
     const typeHref = safeHref(item.url);
@@ -1167,10 +1205,15 @@ async function openHistoryOverlay(lei, displayName, { force = false } = {}) {
 
   const overlay = document.getElementById('history-overlay');
   const titleEl = document.getElementById('history-title');
-  const listEl = document.getElementById('history-list');
+  const leiEl = document.getElementById('history-lei');
   const statusEl = document.getElementById('history-status');
 
-  titleEl.textContent = `Filing history: ${displayName}`;
+  titleEl.textContent = displayName;
+  leiEl.textContent = `LEI: ${lei}`;
+  // A fresh history-back-button entry per open, not per refresh/filter
+  // change - so one Back press (or the on-page Back button, which just
+  // calls history.back()) always returns to the report list in one step.
+  if (overlay.hidden) history.pushState({ historyOverlay: true }, '');
   overlay.hidden = false;
 
   const cache = loadHistoryCache();
@@ -1178,12 +1221,15 @@ async function openHistoryOverlay(lei, displayName, { force = false } = {}) {
   const now = Date.now();
 
   if (!force && cached && now - cached.fetchedAt < HISTORY_CACHE_TTL_MS) {
+    currentHistoryItems = cached.items;
+    populateHistoryTypeFilter(currentHistoryItems);
     const cachedAt = new Date(cached.fetchedAt).toLocaleTimeString();
-    renderHistoryItems(cached.items, ` (cached, loaded at ${cachedAt} — hit Refresh for the latest)`);
+    renderHistoryView(` (cached, loaded at ${cachedAt} — hit Refresh for the latest)`);
     return;
   }
 
-  listEl.innerHTML = '';
+  currentHistoryItems = [];
+  document.getElementById('history-list').innerHTML = '';
   document.getElementById('history-activity').hidden = true;
   statusEl.textContent = 'Loading…';
 
@@ -1202,18 +1248,35 @@ async function openHistoryOverlay(lei, displayName, { force = false } = {}) {
     cache[lei] = { items, fetchedAt: now };
     saveHistoryCache(cache);
 
-    renderHistoryItems(items, '');
+    currentHistoryItems = items;
+    populateHistoryTypeFilter(currentHistoryItems);
+    renderHistoryView('');
   } catch (err) {
     statusEl.textContent = `Failed to load: ${err}`;
   }
 }
 
-document.getElementById('history-close').addEventListener('click', () => {
+function closeHistoryOverlay() {
   document.getElementById('history-overlay').hidden = true;
+}
+
+// Routes through history.back() rather than closing directly, so the
+// on-page Back button and the browser/OS back button behave identically -
+// both end up here via the popstate listener below.
+document.getElementById('history-back').addEventListener('click', () => {
+  history.back();
+});
+
+window.addEventListener('popstate', () => {
+  if (!document.getElementById('history-overlay').hidden) closeHistoryOverlay();
 });
 
 document.getElementById('history-refresh').addEventListener('click', () => {
   if (currentHistoryLei) openHistoryOverlay(currentHistoryLei, currentHistoryName, { force: true });
+});
+
+['history-filter-days', 'history-filter-type', 'history-filter-limit'].forEach((id) => {
+  document.getElementById(id).addEventListener('change', () => renderHistoryView());
 });
 
 document.getElementById('debug-button').addEventListener('click', () => {
@@ -1344,14 +1407,6 @@ function initSettingsForm() {
     };
     saveSettings(newSettings);
     loadReports();
-  });
-
-  document.getElementById('categories-reset').addEventListener('click', () => {
-    for (const value of KNOWN_CATEGORIES) {
-      const checkbox = document.querySelector(`#categories-fieldset input[value="${CSS.escape(value)}"]`);
-      if (checkbox) checkbox.checked = DEFAULT_CATEGORIES.includes(value);
-    }
-    categoriesOtherInput.value = '';
   });
 }
 

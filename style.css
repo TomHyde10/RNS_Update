@@ -661,6 +661,30 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   text-decoration-color: var(--accent);
 }
 
+/* Reset from a <button> (needed for keyboard/click semantics, unlike a
+   plain span) back down to look like inline text matching .col-company's
+   existing muted colour, styled as a link only on hover so the table
+   doesn't read as a wall of link-blue company names. */
+.company-link {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--muted);
+  text-underline-offset: 3px;
+}
+
+.company-link:hover {
+  color: var(--accent);
+  text-decoration-style: solid;
+  text-decoration-color: var(--accent);
+}
+
 .report-row-new td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 
 /* A plain bold accent label instead of a filled pill badge - one fewer
@@ -792,6 +816,50 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
 }
 .overlay-close:hover { background: var(--hover-bg); color: var(--fg); }
 
+/* The filing history overlay behaves like its own page (opened by clicking
+   a company, closed with Back - see history-back's click handler and the
+   popstate listener in app.js) rather than a small dismissible dialog, so
+   it gets a text "← Back" instead of the other overlays' "×" icon. */
+.overlay-back {
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  margin: -0.3rem 0 -0.3rem -0.5rem;
+  font: inherit;
+  font-weight: 600;
+  color: var(--fg);
+  flex: 0 0 auto;
+}
+.overlay-back:hover { background: var(--hover-bg); }
+
+.history-company-info { margin: 0.75rem 0 0; flex: 0 0 auto; }
+.history-lei { margin: 0 0 0.35rem; color: var(--muted); font-size: 0.8rem; font-family: var(--mono-font, monospace); }
+
+.history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+  flex: 0 0 auto;
+}
+.history-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.history-filters select {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--fg);
+}
+
 .history-activity { margin: 0.5rem 0; flex: 0 0 auto; }
 .history-activity-label { margin: 0 0 0.25rem; }
 .history-activity svg { display: block; }
@@ -801,6 +869,8 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   padding: 0;
   margin: 0.5rem 0 0;
   overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .history-list li {
