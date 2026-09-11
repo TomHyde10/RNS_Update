@@ -21,3 +21,18 @@ services:
       # secret once, so nothing sensitive is committed here either.
       - key: VIEW_TOKEN_SECRET
         generateValue: true
+      # Backs both the NSM result cache (lib/cacheStore.js) and automatic
+      # email digest subscriptions (lib/subscriptionStore.js) - the latter
+      # needs this database to exist at all, since a subscription has to
+      # survive process restarts to mean anything as "automatic". Wired
+      # automatically from the database block below.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rns-update-db
+          property: connectionString
+
+databases:
+  - name: rns-update-db
+    plan: free
+    databaseName: rns_update
+    user: rns_update

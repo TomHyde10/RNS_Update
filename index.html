@@ -8,41 +8,31 @@
 </head>
 <body>
   <header class="header-top">
-    <div>
-      <button type="button" id="notify-email-button" class="notify-email-button" title="Set the email address that receives report notifications">
-        Notification email: <span id="notify-email-display">not set</span>
-      </button>
+    <div class="title-row">
+      <button type="button" id="notifications-button" class="notifications-button" title="Set up automatic email digests">Notifications</button>
       <h1>RNS Update</h1>
-      <p>Company report disclosures for the time period and types below — sourced directly from the FCA's National Storage Mechanism, no API key required.</p>
     </div>
-    <label class="theme-toggle">
-      Theme
-      <select id="theme-select">
-        <option value="auto">Auto</option>
-        <option value="light">Light</option>
-        <option value="dark">Dark</option>
-      </select>
-    </label>
+    <div class="header-actions">
+      <button type="button" id="debug-button" class="diagnostics-button" title="Show every scanned item, for diagnosing a missing report">Diagnostics</button>
+      <label class="theme-toggle">
+        Theme
+        <select id="theme-select">
+          <option value="auto">Auto</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </label>
+    </div>
   </header>
 
   <div class="layout">
     <aside class="sidebar">
       <details id="watchlist-manager" class="panel">
         <summary>Companies</summary>
-        <form id="add-company-form">
-          <input id="lei-input" type="text" placeholder="LEI e.g. 549300UC0QPP7Y0W8056" maxlength="20" autocomplete="off" required />
-          <input id="name-input" type="text" placeholder="Display name (optional)" autocomplete="off" />
-          <button type="submit">Add</button>
-        </form>
-        <p id="lei-error" class="error" hidden></p>
-        <ul id="company-list"></ul>
-
-        <div class="watchlist-io">
-          <button type="button" id="watchlist-export">Export list</button>
-          <button type="button" id="watchlist-import-btn">Import list</button>
-          <input type="file" id="watchlist-import-file" accept="application/json" hidden />
+        <div class="watchlist-actions">
+          <button type="button" id="add-company-open">Add</button>
+          <button type="button" id="edit-company-open">Edit</button>
         </div>
-        <p id="watchlist-io-status" class="hint" hidden></p>
       </details>
 
       <details id="settings-manager" class="panel">
@@ -125,11 +115,6 @@
           <tbody id="reports"></tbody>
         </table>
       </div>
-
-      <details>
-        <summary>All items returned in this period (matched or not) — for diagnosing a missing report</summary>
-        <pre id="debug"></pre>
-      </details>
     </main>
   </div>
 
@@ -144,6 +129,109 @@
       </div>
       <p id="history-status" class="hint"></p>
       <ul id="history-list" class="history-list"></ul>
+    </div>
+  </div>
+
+  <div id="debug-overlay" class="overlay" hidden>
+    <div class="overlay-card overlay-card-wide" role="dialog" aria-modal="true" aria-labelledby="debug-title">
+      <div class="overlay-header">
+        <h2 id="debug-title">Diagnostics</h2>
+        <button type="button" id="debug-close" class="overlay-close" aria-label="Close">&times;</button>
+      </div>
+      <p class="hint">All items returned in this period (matched or not) — for diagnosing a missing report.</p>
+      <pre id="debug"></pre>
+    </div>
+  </div>
+
+  <div id="add-company-overlay" class="overlay" hidden>
+    <div class="overlay-card" role="dialog" aria-modal="true" aria-labelledby="add-company-heading">
+      <div class="overlay-header">
+        <h2 id="add-company-heading">Add companies</h2>
+        <button type="button" id="add-company-close" class="overlay-close" aria-label="Close">&times;</button>
+      </div>
+      <form id="add-company-form">
+        <input id="lei-input" type="text" placeholder="LEI e.g. 549300UC0QPP7Y0W8056" maxlength="20" autocomplete="off" required />
+        <input id="name-input" type="text" placeholder="Display name (optional)" autocomplete="off" />
+        <button type="submit">Add</button>
+      </form>
+      <p id="lei-error" class="error" hidden></p>
+
+      <p class="hint overlay-divider">Or paste multiple LEIs at once — extra surrounding text is fine, LEIs are detected automatically.</p>
+      <textarea id="bulk-add-input" rows="4" placeholder="e.g. a pasted list of LEIs, one per line or separated by commas/spaces"></textarea>
+      <div class="settings-buttons">
+        <button type="button" id="bulk-add-btn">Detect &amp; add</button>
+      </div>
+      <p id="bulk-add-status" class="hint" hidden></p>
+    </div>
+  </div>
+
+  <div id="edit-company-overlay" class="overlay" hidden>
+    <div class="overlay-card overlay-card-wide" role="dialog" aria-modal="true" aria-labelledby="edit-company-heading">
+      <div class="overlay-header">
+        <h2 id="edit-company-heading">Edit companies</h2>
+        <button type="button" id="edit-company-close" class="overlay-close" aria-label="Close">&times;</button>
+      </div>
+      <ul id="edit-company-list" class="edit-company-list"></ul>
+      <div class="watchlist-io">
+        <button type="button" id="watchlist-export">Export list</button>
+        <button type="button" id="watchlist-import-btn">Import list</button>
+        <input type="file" id="watchlist-import-file" accept="application/json" hidden />
+      </div>
+      <p id="watchlist-io-status" class="hint" hidden></p>
+    </div>
+  </div>
+
+  <div id="notifications-overlay" class="overlay" hidden>
+    <div class="overlay-card overlay-card-xl" role="dialog" aria-modal="true" aria-labelledby="notifications-heading">
+      <div class="overlay-header">
+        <h2 id="notifications-heading">Notifications</h2>
+        <button type="button" id="notifications-close" class="overlay-close" aria-label="Close">&times;</button>
+      </div>
+      <p class="hint">Each email address below gets its own collated digest - every matching report published since its last send, for the trusts and report types it's set to watch.</p>
+
+      <p id="notifications-unavailable" class="hint" hidden>Automatic email digests need a database configured on this deployment (DATABASE_URL) - ask whoever manages it to set one up.</p>
+
+      <div id="notifications-body">
+        <div class="notifications-toolbar">
+          <label class="notifications-field">
+            Email
+            <select id="notifications-email-select"></select>
+          </label>
+          <button type="button" id="notifications-email-remove">Remove this email</button>
+          <label class="notifications-field">
+            Frequency
+            <select id="notifications-frequency">
+              <option value="0">Paused</option>
+              <option value="60">Every hour</option>
+              <option value="360">Every 6 hours</option>
+              <option value="1440">Daily</option>
+              <option value="10080">Weekly</option>
+            </select>
+          </label>
+        </div>
+        <div class="notifications-add-row">
+          <input type="email" id="notifications-new-email" placeholder="Add another email…" autocomplete="off" />
+          <button type="button" id="notifications-email-add">Add</button>
+        </div>
+        <p id="notifications-status" class="hint" hidden></p>
+
+        <div class="notifications-matrix-wrap">
+          <table class="notifications-matrix">
+            <thead>
+              <tr>
+                <th>Trust</th>
+                <th>Half-year</th>
+                <th>Annual</th>
+                <th>NAV</th>
+                <th>Dividend</th>
+                <th>Portfolio</th>
+                <th>Misc</th>
+              </tr>
+            </thead>
+            <tbody id="notifications-matrix-body"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 

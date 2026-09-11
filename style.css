@@ -3,12 +3,13 @@
   --fg: #18181b;
   --muted: #71717a;
   --bg: #fafafa;
-  --panel-bg: #ffffff;
-  --table-header-bg: #fafafa;
   --border: #e4e4e7;
+  /* The one subtle background used anywhere - row/button hover, the sticky
+     table header, disabled-looking chrome. Everything else sits flush
+     against --bg (no separate "panel" shade) so the page reads as flat
+     content instead of a stack of boxed cards. */
+  --hover-bg: #eeeeef;
   --accent: #1a5fb4;
-  --pill-new-bg: #dbeafe;
-  --pill-new-fg: #1d4ed8;
   --danger: #d64545;
 }
 
@@ -21,12 +22,9 @@
     --fg: #f4f4f5;
     --muted: #a1a1aa;
     --bg: #121214;
-    --panel-bg: #19191c;
-    --table-header-bg: #1f1f23;
     --border: #2c2c31;
+    --hover-bg: #1e1e22;
     --accent: #6ba8f5;
-    --pill-new-bg: #1e3a5f;
-    --pill-new-fg: #93c5fd;
     color-scheme: dark;
   }
 }
@@ -35,12 +33,9 @@
   --fg: #f4f4f5;
   --muted: #a1a1aa;
   --bg: #121214;
-  --panel-bg: #19191c;
-  --table-header-bg: #1f1f23;
   --border: #2c2c31;
+  --hover-bg: #1e1e22;
   --accent: #6ba8f5;
-  --pill-new-bg: #1e3a5f;
-  --pill-new-fg: #93c5fd;
   color-scheme: dark;
 }
 
@@ -61,7 +56,7 @@ body {
      padding is the only gutter, so it scales down gracefully on narrow
      screens (see the .layout breakpoint below) and uses the full width on
      wide monitors instead of leaving large empty margins either side. */
-  padding: 1.5rem;
+  padding: 1.25rem 1.5rem;
   font-size: 14px;
   /* The whole app fits one viewport - header is a fixed-height strip and
      .layout takes the rest, with the sidebar and reports table scrolling
@@ -74,21 +69,8 @@ body {
   overflow: hidden;
 }
 
-header { margin-bottom: 1.5rem; flex: 0 0 auto; }
-header h1 { margin-bottom: 0.2rem; font-size: 1.6rem; font-weight: 700; letter-spacing: -0.01em; }
-header p { color: var(--muted); margin-top: 0; font-size: 0.85rem; }
-
-/* Sits above the title, at the top-left of the page - a quick way to check
-   or change where notifications go without digging into the sidebar. */
-.notify-email-button {
-  display: inline-block;
-  margin-bottom: 0.6rem;
-  font-size: 0.78rem;
-  color: var(--muted);
-  padding: 0.3rem 0.65rem;
-}
-
-.notify-email-button span { color: var(--fg); font-weight: 600; }
+header { margin-bottom: 0.75rem; flex: 0 0 auto; }
+header h1 { margin: 0; font-size: 1.25rem; font-weight: 700; letter-spacing: -0.01em; }
 
 .header-top {
   display: flex;
@@ -96,9 +78,50 @@ header p { color: var(--muted); margin-top: 0; font-size: 0.85rem; }
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
-  padding-bottom: 1.25rem;
+  padding-bottom: 0.75rem;
   border-bottom: 1px solid var(--border);
 }
+
+/* Top-left: the Notifications entry point sits right beside the title,
+   the most prominent spot on the page short of the title itself. */
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.notifications-button {
+  border: none;
+  background: none;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+}
+.notifications-button:hover { background: var(--hover-bg); }
+
+/* Top-right cluster: plain text controls (no button chrome) so unrelated
+   actions - diagnostics, theme - read as one quiet row instead of boxed
+   pills. */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+}
+
+.diagnostics-button {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.diagnostics-button:hover { color: var(--fg); }
 
 .theme-toggle {
   display: flex;
@@ -111,26 +134,26 @@ header p { color: var(--muted); margin-top: 0; font-size: 0.85rem; }
 
 .theme-toggle select {
   font: inherit;
-  padding: 0.3rem 0.5rem;
+  padding: 0.2rem 0.3rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-bg);
+  border-radius: 4px;
+  background: none;
   color: var(--fg);
 }
 
 button {
   font: inherit;
   font-size: 0.85rem;
-  padding: 0.4rem 0.85rem;
+  padding: 0.35rem 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-bg);
+  border-radius: 4px;
+  background: none;
   color: var(--fg);
   cursor: pointer;
 }
 
-button:hover { border-color: var(--accent); }
-button:disabled { opacity: 0.6; cursor: default; }
+button:hover { background: var(--hover-bg); }
+button:disabled { opacity: 0.5; cursor: default; background: none; }
 
 .hint { color: var(--muted); font-size: 0.8rem; margin: 0.4rem 0; }
 
@@ -139,8 +162,8 @@ button:disabled { opacity: 0.6; cursor: default; }
    single column below the tablet breakpoint. */
 .layout {
   display: grid;
-  grid-template-columns: minmax(260px, 320px) 1fr;
-  gap: 1.5rem;
+  grid-template-columns: minmax(240px, 300px) 1fr;
+  gap: 2rem;
   align-items: start;
   flex: 1 1 auto;
   min-height: 0;
@@ -149,7 +172,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 .sidebar {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.25rem;
   height: 100%;
   overflow-y: auto;
   padding-right: 0.25rem;
@@ -176,21 +199,33 @@ button:disabled { opacity: 0.6; cursor: default; }
   .main-content { height: auto; }
 }
 
+/* Sidebar sections are unboxed - a small caps label plus a bottom divider
+   stands in for what used to be a bordered card, so the eye reads them as
+   plain page sections rather than nested panels. */
 .panel {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel-bg);
-  padding: 1rem;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 0 0 1.25rem;
 }
 
-.panel h2 { font-size: 0.9rem; font-weight: 600; margin: 0 0 0.6rem; }
-
-/* Collapsible panels (currently just #watchlist-manager) use <summary>
-   instead of <h2> for the heading - styled to match, plus a custom
-   rotating chevron instead of the browser's default marker. */
-.panel > summary {
-  font-size: 0.9rem;
+.panel h2 {
+  font-size: 0.72rem;
   font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0 0 0.6rem;
+}
+
+/* Collapsible panels (Companies, Search settings) use <summary> instead of
+   <h2> for the heading - styled to match, plus a lightweight rotating
+   marker instead of the browser's default triangle. */
+.panel > summary {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   cursor: pointer;
   list-style: none;
   display: flex;
@@ -200,14 +235,14 @@ button:disabled { opacity: 0.6; cursor: default; }
 .panel > summary::-webkit-details-marker { display: none; }
 .panel > summary::after {
   content: '';
-  width: 0.5rem;
-  height: 0.5rem;
-  border-right: 2px solid var(--muted);
-  border-bottom: 2px solid var(--muted);
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
   transform: rotate(-45deg);
   transition: transform 0.15s ease;
 }
-.panel[open] > summary { margin-bottom: 0.6rem; }
+.panel[open] > summary { margin-bottom: 0.75rem; }
 .panel[open] > summary::after { transform: rotate(45deg); }
 
 #add-company-form {
@@ -218,13 +253,16 @@ button:disabled { opacity: 0.6; cursor: default; }
 
 #add-company-form input {
   font: inherit;
-  padding: 0.4rem 0.6rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-bg);
+  padding: 0.35rem 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
   color: var(--fg);
   min-width: 0;
 }
+
+#add-company-form input:focus { border-bottom-color: var(--accent); outline: none; }
 
 #lei-input { flex: 1 1 100%; }
 #name-input { flex: 1 1 100%; }
@@ -232,50 +270,99 @@ button:disabled { opacity: 0.6; cursor: default; }
 
 .error { color: var(--danger); font-size: 0.85rem; margin: 0.5rem 0 0; }
 
-#company-list {
+/* Separates the quick single-add form from the bulk paste/detect section
+   below it within the Add companies overlay. */
+.overlay-divider {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+#bulk-add-input {
+  font: inherit;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--fg);
+  resize: vertical;
+  margin-top: 0.5rem;
+}
+#bulk-add-input:focus { border-color: var(--accent); outline: none; }
+
+/* The Companies panel itself holds no list any more - just Add/Edit
+   entry points into the two overlays (see .edit-company-list below, the
+   only place the watchlist is actually shown). */
+.watchlist-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.watchlist-actions button { flex: 1 1 0; }
+
+/* One row per company in the Edit companies overlay: a checkbox to
+   include/exclude the company from searches without removing it, an
+   editable name field (renaming wasn't possible before at all), the LEI
+   for reference, then the history/remove actions that used to sit on the
+   sidebar tag itself. */
+.edit-company-list {
   list-style: none;
   padding: 0;
-  margin: 0.75rem 0 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  /* A large watchlist shouldn't push the rest of the sidebar (and the
-     reports next to it) far down the page - scroll within a fixed box
-     instead of growing unbounded. */
-  max-height: 12rem;
+  margin: 0.5rem 0 0;
   overflow-y: auto;
-  padding-right: 0.25rem;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
-.company-tag {
+.edit-company-row {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  border: 1px solid var(--border);
-  background: var(--table-header-bg);
-  border-radius: 999px;
-  padding: 0.2rem 0.35rem 0.2rem 0.65rem;
-  font-size: 0.8rem;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 0;
 }
+.edit-company-row:last-child { border-bottom: none; }
 
-.company-tag .lei { color: var(--muted); font-size: 0.75rem; }
+.edit-company-toggle { flex: 0 0 auto; width: auto; }
+
+/* Deselected (checkbox off) - stays in the list, greyed out, and is left
+   out of the next search until re-enabled. */
+.edit-company-row.is-disabled { opacity: 0.45; }
+
+.edit-company-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  padding: 0.3rem 0;
+  border: none;
+  border-bottom: 1px solid transparent;
+  background: none;
+  color: var(--fg);
+}
+.edit-company-name:hover { border-bottom-color: var(--border); }
+.edit-company-name:focus { border-bottom-color: var(--accent); outline: none; }
+
+.edit-company-row .lei { color: var(--muted); font-size: 0.75rem; flex: 0 0 auto; white-space: nowrap; }
 
 .remove-company,
 .history-company {
   border: none;
   background: transparent;
-  border-radius: 50%;
-  width: 1.3rem;
-  height: 1.3rem;
+  border-radius: 4px;
+  width: 1.4rem;
+  height: 1.4rem;
   line-height: 1;
   padding: 0;
   font-size: 0.85rem;
+  color: var(--muted);
 }
+.remove-company:hover,
+.history-company:hover { background: var(--hover-bg); color: var(--fg); }
 
 .watchlist-io {
   display: flex;
   gap: 0.5rem;
-  margin-top: 0.6rem;
+  margin-top: 0.75rem;
 }
 
 .watchlist-io button { font-size: 0.8rem; flex: 1 1 0; }
@@ -288,7 +375,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 #settings-form {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.75rem;
 }
 
 #settings-form label {
@@ -302,26 +389,34 @@ button:disabled { opacity: 0.6; cursor: default; }
 #settings-form select,
 #settings-form input {
   font: inherit;
-  padding: 0.4rem 0.6rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-bg);
+  padding: 0.35rem 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
   color: var(--fg);
 }
 
+#settings-form select:focus,
+#settings-form input:focus { border-bottom-color: var(--accent); outline: none; }
+
 #settings-form .hint { margin: -0.3rem 0 0; }
 
+/* No border box around the report-type checkboxes - the legend alone,
+   styled like the other small caps labels, is enough to group them. */
 #categories-fieldset {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.5rem 0.75rem 0.75rem;
+  border: none;
+  padding: 0;
   margin: 0;
 }
 
 #categories-fieldset legend {
-  font-size: 0.85rem;
+  font-size: 0.72rem;
+  font-weight: 600;
   color: var(--muted);
-  padding: 0 0.3rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 0 0.4rem;
 }
 
 .checkbox-row {
@@ -331,7 +426,7 @@ button:disabled { opacity: 0.6; cursor: default; }
   gap: 0.4rem;
   font-size: 0.85rem;
   color: var(--fg) !important;
-  padding: 0.15rem 0;
+  padding: 0.2rem 0;
 }
 
 .checkbox-row input { width: auto; }
@@ -343,7 +438,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 
 #reports-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
   margin-bottom: 0.85rem;
@@ -355,54 +450,85 @@ button:disabled { opacity: 0.6; cursor: default; }
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
+  /* Lines up with the bold figure on line 1 of #status, not the whole
+     two-line block, so Refresh - the primary action - sits level with the
+     one number a glance actually lands on. */
+  padding-top: 0.1rem;
 }
 
 .reports-header-actions a {
   font-size: 0.82rem;
   color: var(--accent);
-  padding: 0.4rem 0.6rem;
+  padding: 0.35rem 0.5rem;
 }
 
 .reports-header-actions button { font-size: 0.82rem; }
 
-#status { color: var(--muted); margin: 0; font-size: 0.85rem; }
+/* The one primary action in the view - visually distinct (filled, not
+   just outlined) so it reads as the default thing to do, the way a
+   dashboard's refresh/apply action usually stands apart from secondary
+   export/subscribe links beside it. */
+#refresh {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+#refresh:hover { background: var(--accent); opacity: 0.85; }
+
+#status { color: var(--muted); margin: 0; font-size: 0.85rem; line-height: 1.5; }
+
+/* Headline count leads, sized and weighted like a KPI figure rather than
+   just another word in a sentence - "N new" (when there is any) sits right
+   beside it since it's the other number worth a glance. Scan scope, cache
+   state and refresh time drop to a small muted line underneath instead of
+   competing for the same attention. */
+.stat-figure { font-size: 1.15rem; font-weight: 700; color: var(--fg); }
+.stat-new {
+  margin-left: 0.3rem;
+  font-weight: 700;
+  font-size: 0.78rem;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.stat-meta { display: block; margin-top: 0.15rem; font-size: 0.78rem; color: var(--muted); }
 
 #reports-controls {
   display: flex;
   align-items: center;
   gap: 0.6rem;
   flex-wrap: wrap;
-  margin-bottom: 0.85rem;
+  margin-bottom: 0.6rem;
 }
 
 #report-filter {
   font: inherit;
-  padding: 0.4rem 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-bg);
+  padding: 0.35rem 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
   color: var(--fg);
   flex: 1 1 14rem;
   min-width: 0;
 }
 
+#report-filter:focus { border-bottom-color: var(--accent); outline: none; }
+
 #sort-select {
   font: inherit;
-  padding: 0.4rem 0.7rem;
+  padding: 0.3rem 0.4rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-bg);
+  border-radius: 4px;
+  background: none;
   color: var(--fg);
 }
 
-/* The report list as a data table - column headers, row dividers, a
-   subtle header background and hover highlight, modelled on a typical
-   activity-log table (company / title / category / published / actions)
-   rather than the free-standing cards used previously. */
+/* The report list as a plain data table - just a header rule and row
+   dividers, no enclosing card - so it reads as the page's main content
+   instead of another boxed widget. */
 .reports-table-wrap {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel-bg);
   overflow-y: auto;
   flex: 1 1 auto;
   min-height: 0;
@@ -412,6 +538,7 @@ button:disabled { opacity: 0.6; cursor: default; }
   position: sticky;
   top: 0;
   z-index: 1;
+  background: var(--bg);
 }
 
 .reports-table {
@@ -437,14 +564,13 @@ button:disabled { opacity: 0.6; cursor: default; }
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  background: var(--table-header-bg);
-  padding: 0.65rem 0.9rem;
+  padding: 0 0.9rem 0.6rem 0;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
 
 .reports-table td {
-  padding: 0.7rem 0.9rem;
+  padding: 0.65rem 0.9rem 0.65rem 0;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
   font-size: 0.85rem;
@@ -455,7 +581,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 
 .reports-table tbody tr:last-child td { border-bottom: none; }
-.reports-table tbody tr:hover td { background: var(--table-header-bg); }
+.reports-table tbody tr:hover td { background: var(--hover-bg); }
 
 .col-company { color: var(--muted); }
 .col-title { font-weight: 500; }
@@ -478,17 +604,20 @@ button:disabled { opacity: 0.6; cursor: default; }
 
 .report-row-new td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 
+/* A plain bold accent label instead of a filled pill badge - one fewer
+   color block on a page that already flags new rows with the left bar
+   above. */
 .pill {
   display: inline-block;
-  padding: 0.12rem 0.5rem;
-  border-radius: 999px;
   font-size: 0.68rem;
-  font-weight: 600;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
   margin-left: 0.5rem;
   vertical-align: middle;
 }
 
-.pill-new { background: var(--pill-new-bg); color: var(--pill-new-fg); }
+.pill-new { color: var(--accent); }
 
 .actions-inner {
   display: flex;
@@ -497,7 +626,7 @@ button:disabled { opacity: 0.6; cursor: default; }
   gap: 0.4rem;
 }
 
-.actions-inner .send-notification { font-size: 0.78rem; padding: 0.3rem 0.65rem; }
+.actions-inner .send-notification { font-size: 0.78rem; padding: 0.25rem 0.55rem; }
 .notify-status { font-size: 0.78rem; color: var(--muted); }
 
 .empty { color: var(--muted); text-align: center; padding: 1.5rem !important; font-size: 0.85rem; }
@@ -519,10 +648,19 @@ button:disabled { opacity: 0.6; cursor: default; }
    wouldn't actually hide it without this override. */
 .overlay[hidden] { display: none; }
 
+/* Filing history can be opened from inside the Edit companies overlay (its
+   history button) - equal z-index would let source order decide which one
+   paints on top, and Edit companies comes later in the document, so
+   History would render underneath it. Bumped above the rest so it always
+   wins regardless of which overlay it was opened from. */
+#history-overlay { z-index: 110; }
+
+/* The one place a border earns its keep: floating content with no page
+   flow around it to divide it from the backdrop needs a visible edge. */
 .overlay-card {
-  background: var(--panel-bg);
+  background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 1.5rem;
   max-width: 400px;
   width: 100%;
@@ -531,6 +669,15 @@ button:disabled { opacity: 0.6; cursor: default; }
 .overlay-card-wide {
   max-width: 560px;
   max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The Notifications overlay's trust x report-type matrix needs real width
+   to stay readable - wider and taller than the other "wide" overlays. */
+.overlay-card-xl {
+  max-width: 860px;
+  max-height: 85vh;
   display: flex;
   flex-direction: column;
 }
@@ -562,65 +709,158 @@ button:disabled { opacity: 0.6; cursor: default; }
 
 #notify-email-input {
   font: inherit;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-bg);
+  padding: 0.4rem 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
   color: var(--fg);
 }
 
-#notify-email-display { color: var(--fg); font-weight: 600; }
+#notify-email-input:focus { border-bottom-color: var(--accent); outline: none; }
 
 .overlay-close {
   border: none;
   background: transparent;
-  border-radius: 50%;
+  border-radius: 4px;
   width: 1.6rem;
   height: 1.6rem;
   line-height: 1;
   padding: 0;
   font-size: 1.1rem;
   flex: 0 0 auto;
+  color: var(--muted);
 }
+.overlay-close:hover { background: var(--hover-bg); color: var(--fg); }
 
 .history-list {
   list-style: none;
   padding: 0;
   margin: 0.5rem 0 0;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
 }
 
 .history-list li {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.5rem 0.65rem;
+  border-bottom: 1px solid var(--border);
+  padding: 0.6rem 0;
   font-size: 0.85rem;
 }
+.history-list li:last-child { border-bottom: none; }
 
 .history-date { color: var(--muted); font-size: 0.8rem; }
 .history-type { font-weight: 600; }
 .history-headline { color: var(--muted); }
 
-.main-content > details { margin-top: 1.25rem; }
-.main-content > details summary { cursor: pointer; color: var(--muted); font-size: 0.8rem; }
 #debug {
   white-space: pre-wrap;
   word-break: break-word;
-  background: var(--table-header-bg);
-  border: 1px solid var(--border);
-  padding: 0.75rem;
-  border-radius: 8px;
+  padding: 0;
   font-size: 0.8rem;
+  margin: 0.5rem 0 0;
+  /* Scrolls within the overlay card (which caps at 80vh) instead of
+     growing the modal past the viewport - a full period's scanned items
+     can easily be a few thousand lines of JSON. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
+
+.notifications-toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+
+.notifications-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.notifications-field select {
+  font: inherit;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--fg);
+  min-width: 12rem;
+}
+
+.notifications-add-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.notifications-add-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--fg);
+}
+.notifications-add-row input:focus { border-color: var(--accent); outline: none; }
+
+/* One row per trust, one column per report type - the matrix that decides
+   what a given email is actually notified about. Scrolls both ways: tall
+   with a large watchlist, and (on narrow viewports) wide with six category
+   columns. */
+.notifications-matrix-wrap {
+  margin-top: 0.75rem;
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.notifications-matrix {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 640px;
+}
+
+.notifications-matrix th {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  text-align: left;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.6rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.notifications-matrix th:first-child { text-align: left; padding-left: 0.75rem; }
+.notifications-matrix th:not(:first-child) { text-align: center; }
+
+.notifications-matrix td {
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+.notifications-matrix td.col-company { padding-left: 0.75rem; white-space: nowrap; }
+.notifications-matrix tbody tr:last-child td { border-bottom: none; }
+.notifications-matrix tbody tr:hover td { background: var(--hover-bg); }
+
+.notifications-checkbox-cell { text-align: center; }
 
 /* Narrow screens: 5 columns of real content can't fit a phone width even
    with wrapping (tried it - a narrow Actions column wrapped the button
-   label one letter per line). Scroll horizontally within the bordered box
-   instead, with a min-width generous enough that each fixed-% column (see
-   table-layout: fixed above) gets a usable amount of space. */
+   label one letter per line). Scroll horizontally instead, with a
+   min-width generous enough that each fixed-% column (see table-layout:
+   fixed above) gets a usable amount of space. */
 @media (max-width: 640px) {
   .reports-table-wrap { overflow-x: auto; }
   .reports-table { min-width: 700px; }

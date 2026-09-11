@@ -106,9 +106,9 @@ ISIN or name).
 
 Each report in the list has a **Send Notification** button that emails a
 summary of that report (company, title, type, publish date, link) on click,
-with the linked document attached as a PDF when the report has one. It's
-manual/on-demand for now — nothing is sent automatically when a new report
-appears.
+with the linked document attached as a PDF when the report has one. This is
+the manual, one-off path — see "Automatic email digests" below for
+subscriptions that send on a schedule without anyone clicking anything.
 
 The attachment uses Resend's `path` attachment option — Resend fetches the
 document itself server-side from the report's `url` (NSM's document links
@@ -130,10 +130,9 @@ split into two halves with different requirements:
   (or your shell for local dev) — there's no UI for them, and nothing is
   hardcoded or committed to the repo. If either is missing, clicking the
   button shows an error naming which one, rather than silently failing.
-- **Recipient address:** the first time you click Send Notification (or via
-  the "Notification email" panel in the sidebar), an overlay asks for the
-  email that should receive notifications and saves it to that browser's
-  `localStorage` — it's then sent as `to` on every subsequent notify request
+- **Recipient address:** the first time you click Send Notification, an
+  overlay asks for the email that should receive notifications and saves it
+  to that browser's `localStorage` — it's then sent as `to` on every subsequent notify request
   from that browser. **That per-browser recipient is only honoured when
   `APP_PASSWORD` is set** (see "Authentication") — otherwise anyone with the
   URL could use `/api/notify` to send mail from your verified domain to any
@@ -166,9 +165,9 @@ after you configure credentials is effectively the integration test.
    address from step 2) as environment variables — Render/Northflank
    (service → Environment) or Vercel (Project Settings → Environment
    Variables); locally, in your `.env`.
-5. In the app itself, set the recipient (Send Notification overlay, or the
-   "Notification email" sidebar panel) to whichever address should actually
-   receive the notifications — independent of the Resend account, and can
+5. In the app itself, set the recipient (Send Notification overlay) to
+   whichever address should actually receive the notifications —
+   independent of the Resend account, and can
    be anything as long as you're using a verified domain in step 2 (stays
    restricted to your own signup address if you used the sandbox sender).
    This needs `APP_PASSWORD` set; without it, set `NOTIFY_EMAIL_TO` and
@@ -185,6 +184,44 @@ variables" below) alongside `RESEND_API_KEY`. With both set, plus
 `APP_PASSWORD` (e.g. `/etc/secrets/APP_PASSWORD`, which is what enables the
 in-app recipient), the recipient in the app itself can be any address, not
 just the Resend account's own signup email.
+
+### Automatic email digests
+
+The **Notifications** button (top-left, next to the title) opens a
+subscription manager, independent of the manual Send Notification flow
+above: each email address gets its own send frequency (paused / hourly /
+every 6 hours / daily / weekly) and its own matrix of which trusts, and
+which report types per trust, it should be notified about. On its schedule,
+that address gets one collated email listing everything that matched since
+its last send — not one email per report.
+
+This genuinely runs without a browser tab open: subscriptions live in
+Postgres (`lib/subscriptionStore.js`, `notification_subscriptions` table,
+auto-created on first use) rather than `localStorage`, and `server.js` runs
+a `setInterval` loop (`runDueDigests()`, checks every 5 minutes) that sends
+whatever's due. Requires:
+
+- **`DATABASE_URL`** — see "Persistent cache (Postgres)" below for setup.
+  Without it, the Notifications overlay shows a message explaining that a
+  database is needed, and `/api/subscriptions` is a no-op. This is the one
+  feature in the app that doesn't degrade to a simpler in-memory fallback —
+  a subscription has to survive process restarts and Render free-tier
+  spin-downs to mean anything as "automatic".
+- **`RESEND_API_KEY` / `NOTIFY_EMAIL_FROM`** — same sending config as manual
+  notifications above.
+- Same recipient policy as manual sends: without `APP_PASSWORD`, only the
+  fixed `NOTIFY_EMAIL_TO` address can be subscribed (creating a
+  subscription for any other address is rejected) — otherwise this would be
+  an open relay for recurring, not just one-off, email.
+
+A brand-new subscription's first send covers exactly one cycle back (a
+"daily" subscription's first email covers the last 24h, "weekly" the last
+7 days) rather than its entire history, so turning one on doesn't suddenly
+dump a backlog on someone. Only relevant on Render/Northflank/local (where
+`server.js` is a long-running process) — the Vercel deployment's `api/*.js`
+functions are serverless with nothing to run a background loop, so
+automatic digests don't fire there without separately configuring Vercel
+Cron to hit a due-check endpoint (not currently wired up).
 
 ## Authentication
 

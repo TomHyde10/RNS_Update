@@ -31,8 +31,16 @@ const { sendNotification } = require('./lib/sendNotification');
 const watchlist = require('./config/watchlist');
 const { checkBasicAuth, REALM } = require('./lib/basicAuth');
 const { sealView, openView, resolveReportQuery } = require('./lib/viewToken');
+const subscriptionStore = require('./lib/subscriptionStore');
+const { digestSendAllowed, sendDigestForSubscription } = require('./lib/sendDigest');
 
 const PORT = process.env.PORT || 3000;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// How often the process checks whether any subscription is due - not the
+// subscriptions' own frequency (every hour/day/week, set per-subscription
+// and stored in notification_subscriptions.frequency_minutes), just how
+// finely that due-check is polled.
+const DIGEST_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
 const STATIC_FILES = {
   '/': { file: 'index.html', type: 'text/html' },
@@ -150,6 +158,105 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (parsed.pathname === '/api/subscriptions' && req.method === 'GET') {
+    if (!subscriptionStore.enabled) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ enabled: false, subscriptions: [] }));
+      return;
+    }
+    try {
+      const subscriptions = await subscriptionStore.listSubscriptions();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ enabled: true, subscriptions }));
+    } catch (err) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Failed to load subscriptions: ${err.message || err}` }));
+    }
+    return;
+  }
+
+  if (parsed.pathname === '/api/subscriptions' && req.method === 'POST') {
+    readJsonBody(req, res, async (body) => {
+      if (!subscriptionStore.enabled) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Automatic email digests need a database on this deployment (DATABASE_URL is not set).' }));
+        return;
+      }
+
+      const email = typeof body.email === 'string' ? body.email.trim() : '';
+      if (!EMAIL_RE.test(email)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: "That doesn't look like a valid email address." }));
+        return;
+      }
+      if (!digestSendAllowed(email)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Without APP_PASSWORD, this deployment only sends to its NOTIFY_EMAIL_TO address.' }));
+        return;
+      }
+
+      try {
+        const subscription = await subscriptionStore.createSubscription({
+          email,
+          frequencyMinutes: parseInt(body.frequencyMinutes, 10) || 0,
+          prefs: body.prefs && typeof body.prefs === 'object' ? body.prefs : {},
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ subscription }));
+      } catch (err) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Failed to save subscription: ${err.message || err}` }));
+      }
+    });
+    return;
+  }
+
+  if (parsed.pathname.startsWith('/api/subscriptions/') && req.method === 'PUT') {
+    const id = decodeURIComponent(parsed.pathname.slice('/api/subscriptions/'.length));
+    readJsonBody(req, res, async (body) => {
+      if (!subscriptionStore.enabled) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Automatic email digests need a database on this deployment (DATABASE_URL is not set).' }));
+        return;
+      }
+      try {
+        const subscription = await subscriptionStore.updateSubscription(id, {
+          frequencyMinutes: parseInt(body.frequencyMinutes, 10) || 0,
+          prefs: body.prefs && typeof body.prefs === 'object' ? body.prefs : {},
+        });
+        if (!subscription) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'No subscription with that id.' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ subscription }));
+      } catch (err) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Failed to save subscription: ${err.message || err}` }));
+      }
+    });
+    return;
+  }
+
+  if (parsed.pathname.startsWith('/api/subscriptions/') && req.method === 'DELETE') {
+    const id = decodeURIComponent(parsed.pathname.slice('/api/subscriptions/'.length));
+    if (!subscriptionStore.enabled) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Automatic email digests need a database on this deployment (DATABASE_URL is not set).' }));
+      return;
+    }
+    try {
+      await subscriptionStore.deleteSubscription(id);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Failed to delete subscription: ${err.message || err}` }));
+    }
+    return;
+  }
+
   const staticEntry = STATIC_FILES[parsed.pathname];
   if (!staticEntry) {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -168,6 +275,44 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
+// Checks every subscription against its own frequency and sends any that
+// are due. Runs from a plain setInterval rather than an external cron,
+// since this process (unlike the Vercel serverless functions in api/*.js)
+// stays alive between requests - see the "truly automatic" tradeoff noted
+// in lib/subscriptionStore.js. A subscription's own due-ness is time-based
+// (last_sent_at + its frequency), so a missed or delayed tick just sends
+// slightly late rather than skipping content.
+async function runDueDigests() {
+  if (!subscriptionStore.enabled) return;
+
+  let subscriptions;
+  try {
+    subscriptions = await subscriptionStore.listSubscriptions();
+  } catch (err) {
+    console.error('Failed to load subscriptions for digest run:', err.message || err);
+    return;
+  }
+
+  const now = Date.now();
+  for (const subscription of subscriptions) {
+    if (!subscription.frequencyMinutes) continue; // paused
+    const lastSentMs = subscription.lastSentAt ? new Date(subscription.lastSentAt).getTime() : 0;
+    if (now < lastSentMs + subscription.frequencyMinutes * 60 * 1000) continue;
+
+    try {
+      const result = await sendDigestForSubscription(subscription);
+      await subscriptionStore.markSent(subscription.id, new Date());
+      if (result.sent) console.log(`Digest sent to ${subscription.email}: ${result.count} report(s).`);
+    } catch (err) {
+      console.error(`Digest failed for ${subscription.email}:`, err.message || err);
+    }
+  }
+}
+
 server.listen(PORT, () => {
   console.log(`RNS Update running at http://localhost:${PORT}`);
+  if (subscriptionStore.enabled) {
+    setInterval(runDueDigests, DIGEST_CHECK_INTERVAL_MS);
+    runDueDigests(); // catch up on anything due right after a cold start
+  }
 });

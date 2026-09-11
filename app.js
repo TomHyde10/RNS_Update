@@ -216,11 +216,6 @@ function setNotifyEmail(email) {
   localStorage.setItem(NOTIFY_EMAIL_KEY, email.trim());
 }
 
-function renderNotifyEmailDisplay() {
-  const el = document.getElementById('notify-email-display');
-  el.textContent = getNotifyEmail() || 'not set';
-}
-
 // Shows the "where should notifications go?" overlay. Resolves with the
 // saved email on Save, or null on Cancel - the caller decides what to do
 // with either outcome (e.g. proceed to send, or just leave settings as-is).
@@ -252,7 +247,6 @@ function openNotifyEmailOverlay() {
         return;
       }
       setNotifyEmail(email);
-      renderNotifyEmailDisplay();
       cleanup();
       resolve(email);
     }
@@ -328,27 +322,80 @@ function safeHref(url) {
   }
 }
 
-function renderWatchlist() {
-  const listEl = document.getElementById('company-list');
+// A company can be temporarily excluded from searches (the checkbox in
+// renderEditCompanyList()) without removing it from the watchlist - useful
+// for pausing a company you don't want to lose track of entirely. Absent
+// `enabled` (every entry saved before this feature existed) counts as
+// enabled, so existing watchlists aren't silently emptied.
+function isCompanyEnabled(company) {
+  return company.enabled !== false;
+}
+
+function setCompanyEnabled(lei, enabled) {
+  const watchlist = loadWatchlist();
+  const company = watchlist.find((c) => c.lei === lei);
+  if (!company) return;
+  company.enabled = enabled;
+  saveWatchlist(watchlist);
+}
+
+function renameCompany(lei, name) {
+  const watchlist = loadWatchlist();
+  const company = watchlist.find((c) => c.lei === lei);
+  if (!company) return;
+  company.name = name.trim();
+  saveWatchlist(watchlist);
+}
+
+// The Edit companies overlay is the only place the watchlist is shown or
+// managed - one row per company with a checkbox (include/exclude from
+// searches, greyed out when off), an editable name field (renaming wasn't
+// possible at all before - only add/remove), the LEI for reference, and
+// the history/remove actions.
+function renderEditCompanyList() {
+  const listEl = document.getElementById('edit-company-list');
   const watchlist = loadWatchlist();
 
   listEl.innerHTML = '';
+  if (watchlist.length === 0) {
+    listEl.innerHTML = '<li class="hint">No companies yet - use Add companies to get started.</li>';
+    return;
+  }
+
   for (const company of watchlist) {
+    const enabled = isCompanyEnabled(company);
     const li = document.createElement('li');
-    li.className = 'company-tag';
+    li.className = enabled ? 'edit-company-row' : 'edit-company-row is-disabled';
     li.innerHTML = `
-      <span>${escapeHtml(company.name || company.lei)}${company.name ? ` <span class="lei">(${escapeHtml(company.lei)})</span>` : ''}</span>
+      <input type="checkbox" class="edit-company-toggle" data-lei="${escapeHtml(company.lei)}" ${enabled ? 'checked' : ''} aria-label="Include in searches" title="Include in searches" />
+      <input type="text" class="edit-company-name" data-lei="${escapeHtml(company.lei)}" placeholder="${escapeHtml(company.lei)}" value="${escapeHtml(company.name || '')}" />
+      <span class="lei">${escapeHtml(company.lei)}</span>
       <button type="button" class="history-company" data-lei="${escapeHtml(company.lei)}" data-name="${escapeHtml(company.name || company.lei)}" aria-label="Filing history" title="Filing history">&#128337;</button>
       <button type="button" class="remove-company" data-lei="${escapeHtml(company.lei)}" aria-label="Remove">&times;</button>
     `;
     listEl.appendChild(li);
   }
 
+  listEl.querySelectorAll('.edit-company-toggle').forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      setCompanyEnabled(checkbox.dataset.lei, checkbox.checked);
+      checkbox.closest('.edit-company-row').classList.toggle('is-disabled', !checkbox.checked);
+      loadReports();
+    });
+  });
+
+  listEl.querySelectorAll('.edit-company-name').forEach((input) => {
+    input.addEventListener('change', () => {
+      renameCompany(input.dataset.lei, input.value);
+      loadReports();
+    });
+  });
+
   listEl.querySelectorAll('.remove-company').forEach((btn) => {
     btn.addEventListener('click', () => {
       const remaining = loadWatchlist().filter((c) => c.lei !== btn.dataset.lei);
       saveWatchlist(remaining);
-      renderWatchlist();
+      renderEditCompanyList();
       loadReports();
     });
   });
@@ -380,8 +427,46 @@ function addCompany(lei, name) {
   errorEl.hidden = true;
   watchlist.push({ lei: normalisedLei, name: name.trim() });
   saveWatchlist(watchlist);
-  renderWatchlist();
+  renderEditCompanyList();
   return true;
+}
+
+// Finds every 20-character LEI-shaped token in pasted text, ignoring
+// anything else around it (so a pasted spreadsheet column, a comma/newline
+// separated list, or free text mentioning LEIs all work the same way) -
+// the \b boundaries stop this from matching the first 20 characters of a
+// longer alphanumeric run.
+function extractLeis(text) {
+  const matches = text.toUpperCase().match(/\b[A-Z0-9]{20}\b/g) || [];
+  return [...new Set(matches.filter((s) => LEI_RE.test(s)))];
+}
+
+function bulkAddCompanies(text) {
+  const statusEl = document.getElementById('bulk-add-status');
+  const found = extractLeis(text);
+  statusEl.hidden = false;
+
+  if (found.length === 0) {
+    statusEl.textContent = 'No valid LEIs found (20-character letters/digits).';
+    return 0;
+  }
+
+  const watchlist = loadWatchlist();
+  const existingLeis = new Set(watchlist.map((c) => c.lei));
+  let added = 0;
+  for (const lei of found) {
+    if (!existingLeis.has(lei)) {
+      watchlist.push({ lei, name: '' });
+      existingLeis.add(lei);
+      added++;
+    }
+  }
+
+  saveWatchlist(watchlist);
+  renderEditCompanyList();
+  const skipped = found.length - added;
+  statusEl.textContent = `Found ${found.length} LEI${found.length === 1 ? '' : 's'}, added ${added} new compan${added === 1 ? 'y' : 'ies'}${skipped ? ` (${skipped} already in your list)` : ''}.`;
+  return added;
 }
 
 // Shows an OS notification for reports that appeared since the last load,
@@ -475,7 +560,7 @@ async function importWatchlistFile(file) {
     }
 
     saveWatchlist(watchlist);
-    renderWatchlist();
+    renderEditCompanyList();
     const skipped = parsed.length - valid.length;
     statusEl.textContent = `Imported ${added} new compan${added === 1 ? 'y' : 'ies'} (${valid.length - added} already in your list${skipped ? `, ${skipped} invalid entr${skipped === 1 ? 'y' : 'ies'} skipped` : ''}).`;
     if (added > 0) loadReports();
@@ -668,6 +753,10 @@ async function loadReports() {
   const debugEl = document.getElementById('debug');
   const feedLink = document.getElementById('feed-link');
   const watchlist = loadWatchlist();
+  // Deselected companies (the checkbox in the Edit companies overlay) stay
+  // in the watchlist but are left out of the search entirely - not just
+  // filtered out of the results afterwards.
+  const activeWatchlist = watchlist.filter(isCompanyEnabled);
   const settings = loadSettings();
 
   listEl.innerHTML = '';
@@ -676,7 +765,13 @@ async function loadReports() {
   lastNewKeys = new Set();
 
   if (watchlist.length === 0) {
-    statusEl.textContent = 'Add a company LEI above to see its reports.';
+    statusEl.textContent = 'No companies in your watchlist yet - use Add companies to get started.';
+    feedLink.removeAttribute('href');
+    return;
+  }
+
+  if (activeWatchlist.length === 0) {
+    statusEl.textContent = 'All companies are deselected - enable at least one in Edit companies to see its reports.';
     feedLink.removeAttribute('href');
     return;
   }
@@ -684,7 +779,7 @@ async function loadReports() {
   statusEl.textContent = 'Loading…';
 
   try {
-    const leis = watchlist.map((c) => c.lei).join(',');
+    const leis = activeWatchlist.map((c) => c.lei).join(',');
     const query = await viewQueryString({
       leis,
       days: String(settings.days),
@@ -702,10 +797,6 @@ async function loadReports() {
       return;
     }
 
-    const cachedCount = (data.cachedLeis || []).length;
-    const refreshedAt = new Date().toLocaleTimeString();
-    statusEl.textContent = `${data.count} report(s) found in the last ${data.days} day(s) (scanned ${data.scanned} item(s) across ${watchlist.length} compan${watchlist.length === 1 ? 'y' : 'ies'}, matching: ${data.categories.join(', ')}). Refreshed at ${refreshedAt}${cachedCount ? ` (${cachedCount} of ${watchlist.length} from cache)` : ''}.`;
-
     const namesByLei = new Map(watchlist.map((c) => [c.lei, c.name]));
     const resolvedReports = data.reports.map((r) => ({
       ...r,
@@ -717,6 +808,19 @@ async function loadReports() {
     const isBaseline = seenBefore.size === 0;
     const newReports = resolvedReports.filter((r) => !seenBefore.has(reportKey(r)));
     lastNewKeys = isBaseline ? new Set() : new Set(newReports.map(reportKey));
+
+    // Leads with the one number that matters (how many reports), a
+    // same-line "N new" callout when there's something to see, and pushes
+    // everything else (scan scope, cache, refresh time) down into a
+    // smaller detail line - a KPI-first layout instead of one dense
+    // run-on sentence that buries the headline count in prose.
+    const cachedCount = (data.cachedLeis || []).length;
+    const refreshedAt = new Date().toLocaleTimeString();
+    const newCount = !isBaseline ? newReports.length : 0;
+    statusEl.innerHTML = `
+      <span class="stat-figure">${data.count}</span> report${data.count === 1 ? '' : 's'}${newCount ? ` <span class="stat-new">${newCount} new</span>` : ''}
+      <span class="stat-meta">last ${data.days} day${data.days === 1 ? '' : 's'} · ${activeWatchlist.length} compan${activeWatchlist.length === 1 ? 'y' : 'ies'} · ${data.scanned} scanned · matching ${escapeHtml(data.categories.join(', '))} · updated ${refreshedAt}${cachedCount ? ` (${cachedCount} cached)` : ''}</span>
+    `;
 
     renderReportsList();
 
@@ -817,6 +921,26 @@ document.getElementById('history-refresh').addEventListener('click', () => {
   if (currentHistoryLei) openHistoryOverlay(currentHistoryLei, currentHistoryName, { force: true });
 });
 
+document.getElementById('debug-button').addEventListener('click', () => {
+  document.getElementById('debug-overlay').hidden = false;
+});
+
+document.getElementById('debug-close').addEventListener('click', () => {
+  document.getElementById('debug-overlay').hidden = true;
+});
+
+document.getElementById('add-company-open').addEventListener('click', () => {
+  document.getElementById('lei-error').hidden = true;
+  document.getElementById('bulk-add-status').hidden = true;
+  document.getElementById('bulk-add-input').value = '';
+  document.getElementById('add-company-overlay').hidden = false;
+  document.getElementById('lei-input').focus();
+});
+
+document.getElementById('add-company-close').addEventListener('click', () => {
+  document.getElementById('add-company-overlay').hidden = true;
+});
+
 document.getElementById('add-company-form').addEventListener('submit', (e) => {
   e.preventDefault();
   const leiInput = document.getElementById('lei-input');
@@ -828,6 +952,24 @@ document.getElementById('add-company-form').addEventListener('submit', (e) => {
     leiInput.focus();
     loadReports();
   }
+});
+
+document.getElementById('bulk-add-btn').addEventListener('click', () => {
+  const textarea = document.getElementById('bulk-add-input');
+  if (bulkAddCompanies(textarea.value) > 0) {
+    textarea.value = '';
+    loadReports();
+  }
+});
+
+document.getElementById('edit-company-open').addEventListener('click', () => {
+  renderEditCompanyList();
+  document.getElementById('watchlist-io-status').hidden = true;
+  document.getElementById('edit-company-overlay').hidden = false;
+});
+
+document.getElementById('edit-company-close').addEventListener('click', () => {
+  document.getElementById('edit-company-overlay').hidden = true;
 });
 
 document.getElementById('refresh').addEventListener('click', loadReports);
@@ -914,8 +1056,206 @@ function initReportControls() {
   document.getElementById('sort-select').value = loadSort();
 }
 
-document.getElementById('notify-email-button').addEventListener('click', () => {
-  openNotifyEmailOverlay();
+// Automatic email digests: unlike the ad-hoc "Send Notification" flow above
+// (one report, typed-in-the-moment email, sent immediately), these are
+// server-side subscriptions - one row per email address, each with its own
+// send frequency and its own per-trust/per-report-type selection - stored
+// in Postgres and sent by a scheduler in server.js even with no browser tab
+// open. Fixed to the same six categories as Search settings' checkboxes,
+// since the matrix needs a fixed set of columns to render.
+const NOTIFICATION_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report', 'Net Asset Value(s)', 'Dividend Declaration', 'Portfolio Update', 'Miscellaneous'];
+
+let notificationsState = { enabled: false, subscriptions: [], selectedId: null };
+
+function currentSubscription() {
+  return notificationsState.subscriptions.find((s) => s.id === notificationsState.selectedId) || null;
+}
+
+function showNotificationsStatus(message) {
+  const statusEl = document.getElementById('notifications-status');
+  statusEl.hidden = !message;
+  statusEl.textContent = message || '';
+}
+
+async function loadSubscriptions() {
+  const res = await fetch('/api/subscriptions');
+  const { ok, status, data } = await parseJsonResponse(res);
+  if (!ok) throw new Error(data.error || `Couldn't load notifications (${status})`);
+
+  notificationsState.enabled = Boolean(data.enabled);
+  notificationsState.subscriptions = data.subscriptions || [];
+  if (!notificationsState.subscriptions.some((s) => s.id === notificationsState.selectedId)) {
+    notificationsState.selectedId = notificationsState.subscriptions[0] ? notificationsState.subscriptions[0].id : null;
+  }
+}
+
+function renderNotificationsMatrix(subscription) {
+  const bodyEl = document.getElementById('notifications-matrix-body');
+  const watchlist = loadWatchlist();
+
+  bodyEl.innerHTML = '';
+  if (watchlist.length === 0) {
+    bodyEl.innerHTML = '<tr><td colspan="7" class="empty">Add companies to your watchlist first.</td></tr>';
+    return;
+  }
+
+  for (const company of watchlist) {
+    const selected = (subscription.prefs[company.lei] && subscription.prefs[company.lei].categories) || [];
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="col-company">${escapeHtml(company.name || company.lei)}</td>
+      ${NOTIFICATION_CATEGORIES.map((category) => `
+        <td class="notifications-checkbox-cell">
+          <input type="checkbox" class="notifications-pref" data-lei="${escapeHtml(company.lei)}" data-category="${escapeHtml(category)}" ${selected.includes(category) ? 'checked' : ''} aria-label="${escapeHtml(category)} for ${escapeHtml(company.name || company.lei)}" />
+        </td>
+      `).join('')}
+    `;
+    bodyEl.appendChild(tr);
+  }
+
+  bodyEl.querySelectorAll('.notifications-pref').forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      toggleNotificationPref(checkbox.dataset.lei, checkbox.dataset.category, checkbox.checked);
+    });
+  });
+}
+
+function renderNotificationsOverlay() {
+  const unavailableEl = document.getElementById('notifications-unavailable');
+  const bodyEl = document.getElementById('notifications-body');
+  unavailableEl.hidden = notificationsState.enabled;
+  bodyEl.hidden = !notificationsState.enabled;
+  if (!notificationsState.enabled) return;
+
+  const selectEl = document.getElementById('notifications-email-select');
+  const removeBtn = document.getElementById('notifications-email-remove');
+  const freqSelect = document.getElementById('notifications-frequency');
+  const matrixBody = document.getElementById('notifications-matrix-body');
+
+  selectEl.innerHTML = notificationsState.subscriptions
+    .map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.email)}</option>`)
+    .join('');
+
+  const subscription = currentSubscription();
+  if (!subscription) {
+    selectEl.innerHTML = '<option value="">No emails yet</option>';
+    removeBtn.disabled = true;
+    freqSelect.disabled = true;
+    matrixBody.innerHTML = '<tr><td colspan="7" class="empty">Add an email above to configure its notifications.</td></tr>';
+    return;
+  }
+
+  selectEl.value = subscription.id;
+  removeBtn.disabled = false;
+  freqSelect.disabled = false;
+  freqSelect.value = String(subscription.frequencyMinutes || 0);
+  renderNotificationsMatrix(subscription);
+}
+
+async function saveCurrentSubscription() {
+  const subscription = currentSubscription();
+  if (!subscription) return;
+  try {
+    const res = await fetch(`/api/subscriptions/${encodeURIComponent(subscription.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ frequencyMinutes: subscription.frequencyMinutes, prefs: subscription.prefs }),
+    });
+    const { ok, status, data } = await parseJsonResponse(res);
+    if (!ok) throw new Error(data.error || `Couldn't save (${status})`);
+    showNotificationsStatus('');
+  } catch (err) {
+    showNotificationsStatus(`Failed to save: ${err.message || err}`);
+  }
+}
+
+function toggleNotificationPref(lei, category, checked) {
+  const subscription = currentSubscription();
+  if (!subscription) return;
+
+  const company = loadWatchlist().find((c) => c.lei === lei);
+  const existing = subscription.prefs[lei] || { name: (company && company.name) || lei, categories: [] };
+  const categories = new Set(existing.categories);
+  if (checked) categories.add(category); else categories.delete(category);
+
+  if (categories.size === 0) {
+    delete subscription.prefs[lei];
+  } else {
+    subscription.prefs[lei] = { name: (company && company.name) || lei, categories: [...categories] };
+  }
+  saveCurrentSubscription();
+}
+
+document.getElementById('notifications-button').addEventListener('click', async () => {
+  document.getElementById('notifications-overlay').hidden = false;
+  showNotificationsStatus('');
+  try {
+    await loadSubscriptions();
+  } catch (err) {
+    showNotificationsStatus(`Failed to load: ${err.message || err}`);
+  }
+  renderNotificationsOverlay();
+});
+
+document.getElementById('notifications-close').addEventListener('click', () => {
+  document.getElementById('notifications-overlay').hidden = true;
+});
+
+document.getElementById('notifications-email-select').addEventListener('change', (e) => {
+  notificationsState.selectedId = e.target.value || null;
+  renderNotificationsOverlay();
+});
+
+document.getElementById('notifications-frequency').addEventListener('change', (e) => {
+  const subscription = currentSubscription();
+  if (!subscription) return;
+  subscription.frequencyMinutes = parseInt(e.target.value, 10) || 0;
+  saveCurrentSubscription();
+});
+
+document.getElementById('notifications-email-add').addEventListener('click', async () => {
+  const input = document.getElementById('notifications-new-email');
+  const email = input.value.trim();
+  if (!EMAIL_RE.test(email)) {
+    showNotificationsStatus("That doesn't look like a valid email address.");
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/subscriptions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, frequencyMinutes: 1440, prefs: {} }),
+    });
+    const { ok, status, data } = await parseJsonResponse(res);
+    if (!ok) throw new Error(data.error || `Couldn't add (${status})`);
+
+    notificationsState.subscriptions.push(data.subscription);
+    notificationsState.selectedId = data.subscription.id;
+    input.value = '';
+    showNotificationsStatus('');
+    renderNotificationsOverlay();
+  } catch (err) {
+    showNotificationsStatus(`Failed to add: ${err.message || err}`);
+  }
+});
+
+document.getElementById('notifications-email-remove').addEventListener('click', async () => {
+  const subscription = currentSubscription();
+  if (!subscription) return;
+
+  try {
+    const res = await fetch(`/api/subscriptions/${encodeURIComponent(subscription.id)}`, { method: 'DELETE' });
+    const { ok, status, data } = await parseJsonResponse(res);
+    if (!ok) throw new Error(data.error || `Couldn't remove (${status})`);
+
+    notificationsState.subscriptions = notificationsState.subscriptions.filter((s) => s.id !== subscription.id);
+    notificationsState.selectedId = notificationsState.subscriptions[0] ? notificationsState.subscriptions[0].id : null;
+    showNotificationsStatus('');
+    renderNotificationsOverlay();
+  } catch (err) {
+    showNotificationsStatus(`Failed to remove: ${err.message || err}`);
+  }
 });
 
 (async () => {
@@ -926,8 +1266,6 @@ document.getElementById('notify-email-button').addEventListener('click', () => {
   await initWatchlist();
   initSettingsForm();
   initReportControls();
-  renderWatchlist();
-  renderNotifyEmailDisplay();
   await loadReports();
   if (urlViewError) {
     const statusEl = document.getElementById('status');
