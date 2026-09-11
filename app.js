@@ -1089,21 +1089,83 @@ async function loadSubscriptions() {
   }
 }
 
+// Sets or clears every category at once for one trust (the "All types"
+// column) or one category across every trust (the checkbox built into each
+// column header) - both just call the same per-cell logic in a loop, then
+// re-render so every checkbox's checked/indeterminate state stays correct
+// (a bulk change can flip several cells, not just the one clicked).
+function setAllCategoriesForTrust(lei, checked) {
+  const subscription = currentSubscription();
+  if (!subscription) return;
+  const company = loadWatchlist().find((c) => c.lei === lei);
+  if (checked) {
+    subscription.prefs[lei] = { name: (company && company.name) || lei, categories: [...NOTIFICATION_CATEGORIES] };
+  } else {
+    delete subscription.prefs[lei];
+  }
+  saveCurrentSubscription();
+  renderNotificationsMatrix(subscription);
+}
+
+function setCategoryForAllTrusts(category, checked) {
+  const subscription = currentSubscription();
+  if (!subscription) return;
+  for (const company of loadWatchlist()) {
+    const existing = subscription.prefs[company.lei] || { name: company.name || company.lei, categories: [] };
+    const categories = new Set(existing.categories);
+    if (checked) categories.add(category); else categories.delete(category);
+    if (categories.size === 0) {
+      delete subscription.prefs[company.lei];
+    } else {
+      subscription.prefs[company.lei] = { name: company.name || company.lei, categories: [...categories] };
+    }
+  }
+  saveCurrentSubscription();
+  renderNotificationsMatrix(subscription);
+}
+
+// The column-header "select this type for every trust" checkboxes live in
+// the static <thead> (never re-created), so their checked/indeterminate
+// state is refreshed here on every matrix render instead of re-wiring
+// listeners each time - those are attached once, further down.
+function updateNotificationsColumnToggles(subscription, watchlist) {
+  document.querySelectorAll('.notifications-col-all').forEach((checkbox) => {
+    if (watchlist.length === 0) {
+      checkbox.checked = false;
+      checkbox.indeterminate = false;
+      checkbox.disabled = true;
+      return;
+    }
+    checkbox.disabled = false;
+    const selectedCount = watchlist.filter((c) => {
+      const categories = (subscription.prefs[c.lei] && subscription.prefs[c.lei].categories) || [];
+      return categories.includes(checkbox.dataset.category);
+    }).length;
+    checkbox.checked = selectedCount === watchlist.length;
+    checkbox.indeterminate = selectedCount > 0 && selectedCount < watchlist.length;
+  });
+}
+
 function renderNotificationsMatrix(subscription) {
   const bodyEl = document.getElementById('notifications-matrix-body');
   const watchlist = loadWatchlist();
 
   bodyEl.innerHTML = '';
   if (watchlist.length === 0) {
-    bodyEl.innerHTML = '<tr><td colspan="7" class="empty">Add companies to your watchlist first.</td></tr>';
+    bodyEl.innerHTML = '<tr><td colspan="8" class="empty">Add companies to your watchlist first.</td></tr>';
+    updateNotificationsColumnToggles(subscription, watchlist);
     return;
   }
 
   for (const company of watchlist) {
     const selected = (subscription.prefs[company.lei] && subscription.prefs[company.lei].categories) || [];
+    const allSelected = selected.length === NOTIFICATION_CATEGORIES.length;
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="col-company">${escapeHtml(company.name || company.lei)}</td>
+      <td class="notifications-checkbox-cell">
+        <input type="checkbox" class="notifications-row-all" data-lei="${escapeHtml(company.lei)}" ${allSelected ? 'checked' : ''} aria-label="All report types for ${escapeHtml(company.name || company.lei)}" title="Toggle every report type for this trust" />
+      </td>
       ${NOTIFICATION_CATEGORIES.map((category) => `
         <td class="notifications-checkbox-cell">
           <input type="checkbox" class="notifications-pref" data-lei="${escapeHtml(company.lei)}" data-category="${escapeHtml(category)}" ${selected.includes(category) ? 'checked' : ''} aria-label="${escapeHtml(category)} for ${escapeHtml(company.name || company.lei)}" />
@@ -1111,6 +1173,7 @@ function renderNotificationsMatrix(subscription) {
       `).join('')}
     `;
     bodyEl.appendChild(tr);
+    tr.querySelector('.notifications-row-all').indeterminate = selected.length > 0 && !allSelected;
   }
 
   bodyEl.querySelectorAll('.notifications-pref').forEach((checkbox) => {
@@ -1118,6 +1181,14 @@ function renderNotificationsMatrix(subscription) {
       toggleNotificationPref(checkbox.dataset.lei, checkbox.dataset.category, checkbox.checked);
     });
   });
+
+  bodyEl.querySelectorAll('.notifications-row-all').forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      setAllCategoriesForTrust(checkbox.dataset.lei, checkbox.checked);
+    });
+  });
+
+  updateNotificationsColumnToggles(subscription, watchlist);
 }
 
 function renderNotificationsOverlay() {
@@ -1141,7 +1212,12 @@ function renderNotificationsOverlay() {
     selectEl.innerHTML = '<option value="">No emails yet</option>';
     removeBtn.disabled = true;
     freqSelect.disabled = true;
-    matrixBody.innerHTML = '<tr><td colspan="7" class="empty">Add an email above to configure its notifications.</td></tr>';
+    matrixBody.innerHTML = '<tr><td colspan="8" class="empty">Add an email above to configure its notifications.</td></tr>';
+    document.querySelectorAll('.notifications-col-all').forEach((checkbox) => {
+      checkbox.checked = false;
+      checkbox.indeterminate = false;
+      checkbox.disabled = true;
+    });
     return;
   }
 
@@ -1184,6 +1260,10 @@ function toggleNotificationPref(lei, category, checked) {
     subscription.prefs[lei] = { name: (company && company.name) || lei, categories: [...categories] };
   }
   saveCurrentSubscription();
+  // Re-render so this trust's "All types" checkbox and this category's
+  // column-header checkbox pick up the new checked/indeterminate state -
+  // both depend on every cell, not just the one just clicked.
+  renderNotificationsMatrix(subscription);
 }
 
 document.getElementById('notifications-button').addEventListener('click', async () => {
@@ -1211,6 +1291,15 @@ document.getElementById('notifications-frequency').addEventListener('change', (e
   if (!subscription) return;
   subscription.frequencyMinutes = parseInt(e.target.value, 10) || 0;
   saveCurrentSubscription();
+});
+
+// The column-header "select this type for every trust" checkboxes are
+// static (part of the <thead>, never rebuilt), so their listeners are
+// wired once here rather than in renderNotificationsMatrix().
+document.querySelectorAll('.notifications-col-all').forEach((checkbox) => {
+  checkbox.addEventListener('change', () => {
+    setCategoryForAllTrusts(checkbox.dataset.category, checkbox.checked);
+  });
 });
 
 document.getElementById('notifications-email-add').addEventListener('click', async () => {

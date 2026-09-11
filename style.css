@@ -809,6 +809,19 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
 }
 .notifications-add-row input:focus { border-color: var(--accent); outline: none; }
 
+/* Sits between .overlay-card-xl (a flex column) and .notifications-matrix-wrap
+   (flex: 1 1 auto; min-height: 0, expecting to shrink and scroll within the
+   card's 85vh cap) - without being a flex column itself, that sizing has no
+   parent to apply to, so the matrix grows to its full unclipped content
+   height (every row) and spills out past the card's bottom edge into the
+   page underneath, instead of stopping at the card and scrolling. */
+#notifications-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 /* One row per trust, one column per report type - the matrix that decides
    what a given email is actually notified about. Scrolls both ways: tall
    with a large watchlist, and (on narrow viewports) wide with six category
@@ -820,12 +833,23 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   min-height: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
+  background: var(--bg);
+  /* Own stacking/compositing context - a scrolling container with a sticky
+     child inside a translucent-backdrop overlay can otherwise get its own
+     GPU layer during scroll, and any cell without an explicit background
+     (table cells are transparent by default) then lets whatever's on the
+     page *behind* the overlay show through in that layer instead of this
+     opaque card - seen as a stray band of the reports table's own text/
+     colors cutting into a matrix row. Isolating the context plus giving
+     every cell its own background (below) closes both ends of that gap. */
+  isolation: isolate;
 }
 
 .notifications-matrix {
   width: 100%;
   border-collapse: collapse;
-  min-width: 640px;
+  min-width: 740px;
+  background: var(--bg);
 }
 
 .notifications-matrix th {
@@ -845,10 +869,23 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
 .notifications-matrix th:first-child { text-align: left; padding-left: 0.75rem; }
 .notifications-matrix th:not(:first-child) { text-align: center; }
 
+/* Each category column header doubles as a "select this type for every
+   trust" toggle - the checkbox sits right under its own column label
+   rather than needing a second header row. */
+.notifications-col-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+}
+.notifications-col-all { cursor: pointer; }
+
 .notifications-matrix td {
   padding: 0.5rem;
   border-bottom: 1px solid var(--border);
   font-size: 0.85rem;
+  background: var(--bg);
 }
 .notifications-matrix td.col-company { padding-left: 0.75rem; white-space: nowrap; }
 .notifications-matrix tbody tr:last-child td { border-bottom: none; }
