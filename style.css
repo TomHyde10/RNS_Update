@@ -11,6 +11,7 @@
   --hover-bg: #eeeeef;
   --accent: #1a5fb4;
   --danger: #d64545;
+  --warning: #b45f06;
 }
 
 /* Follows the OS preference by default. An explicit choice from the
@@ -504,6 +505,13 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   flex-wrap: wrap;
 }
 
+.reports-status-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+}
+
 .reports-header-actions {
   display: flex;
   align-items: center;
@@ -552,6 +560,20 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   letter-spacing: 0.02em;
 }
 .stat-meta { display: block; margin-top: 0.15rem; font-size: 0.78rem; color: var(--muted); }
+
+.due-dates-pill {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--warning);
+  background: none;
+  border: 1px solid var(--warning);
+  border-radius: 12px;
+  padding: 0.2rem 0.6rem;
+  margin-top: 0.35rem;
+  cursor: pointer;
+}
+.due-dates-pill:hover { background: var(--hover-bg); }
 
 #reports-controls {
   display: flex;
@@ -883,6 +905,42 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
 .history-date { color: var(--muted); font-size: 0.8rem; }
 .history-type { font-weight: 600; }
 .history-headline { color: var(--muted); }
+
+.due-dates-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0 0;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.due-dates-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  padding: 0.6rem 0;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.due-dates-row:last-child { border-bottom: none; }
+.due-dates-row:hover { background: var(--hover-bg); }
+
+.due-dates-status {
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 0.15rem 0.45rem;
+  border-radius: 10px;
+}
+.due-dates-status-overdue { color: var(--danger); border: 1px solid var(--danger); }
+.due-dates-status-due-soon { color: var(--warning); border: 1px solid var(--warning); }
+
+.due-dates-name { font-weight: 600; }
+.due-dates-type { color: var(--muted); }
 
 #debug {
   white-space: pre-wrap;

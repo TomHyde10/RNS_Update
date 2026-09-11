@@ -90,7 +90,10 @@
 
     <main class="main-content">
       <div id="reports-header">
-        <p id="status">Loading…</p>
+        <div class="reports-status-group">
+          <p id="status">Loading…</p>
+          <button type="button" id="due-dates-pill" class="due-dates-pill" hidden title="Companies that may be overdue on their Half-year/Annual Financial Report (estimated)"></button>
+        </div>
         <div class="reports-header-actions">
           <a id="feed-link" href="#" target="_blank" rel="noopener" title="Subscribe in a feed reader">RSS feed</a>
           <button type="button" id="export-csv">Download CSV</button>
@@ -168,6 +171,17 @@
       </div>
 
       <ul id="history-list" class="history-list"></ul>
+    </div>
+  </div>
+
+  <div id="due-dates-overlay" class="overlay" hidden>
+    <div class="overlay-card overlay-card-wide" role="dialog" aria-modal="true" aria-labelledby="due-dates-heading">
+      <div class="overlay-header">
+        <h2 id="due-dates-heading">Filing due dates</h2>
+        <button type="button" id="due-dates-close" class="overlay-close" aria-label="Close">&times;</button>
+      </div>
+      <p class="hint">Estimated from each company's own past filing pattern and the FCA's usual reporting deadlines - not a confirmed date. Click a row for its full filing history.</p>
+      <ul id="due-dates-list" class="due-dates-list"></ul>
     </div>
   </div>
 

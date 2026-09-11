@@ -2,6 +2,7 @@ const STORAGE_KEY = 'rns-watchlist';
 const SETTINGS_KEY = 'rns-settings';
 const SEEN_KEY = 'rns-seen-reports';
 const HISTORY_CACHE_KEY = 'rns-history-cache';
+const DUE_DATES_CACHE_KEY = 'rns-due-dates-cache';
 const SORT_KEY = 'rns-sort';
 const THEME_KEY = 'rns-theme';
 const NOTIFY_EMAIL_KEY = 'rns-notify-email';
@@ -30,10 +31,15 @@ const HISTORY_CACHE_TTL_MS = HISTORY_CACHE_TTL_MINUTES * 60 * 1000;
 // so removing a company from your watchlist doesn't leave its history
 // cached in localStorage forever.
 const HISTORY_CACHE_PRUNE_MS = 24 * 60 * 60 * 1000;
+// Due status changes at most daily (it's derived from filing dates, not
+// anything minute-to-minute), so this is much longer-lived than the
+// history cache above - no point re-checking every page load.
+const DUE_DATES_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
 let lastReports = [];
 let lastNewKeys = new Set();
 let autoRefreshTimer = null;
+let dueInfoByLei = {};
 let currentHistoryLei = null;
 let currentHistoryName = null;
 let currentHistoryItems = [];
@@ -456,6 +462,124 @@ function saveHistoryCache(cache) {
   }
   localStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify(pruned));
 }
+
+function loadDueDatesCache() {
+  try {
+    const raw = localStorage.getItem(DUE_DATES_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' && parsed.dueInfo ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// checkedLeis is stored alongside dueInfo (which - see lib/dueDates.js -
+// omits a LEI entirely when it genuinely has no matching filings, the same
+// shape as "never checked at all") so a newly-added company can be told
+// apart from one that was already checked and came back with nothing.
+function saveDueDatesCache(dueInfo, checkedLeis) {
+  localStorage.setItem(DUE_DATES_CACHE_KEY, JSON.stringify({ dueInfo, checkedLeis, fetchedAt: Date.now() }));
+}
+
+// Checks every enabled watchlist company's Half-year/Annual Financial
+// Report status (see lib/dueDates.js) - cached client-side since this
+// changes at most daily, so a normal page reload doesn't re-check it every
+// time. Not awaited from the startup sequence: this is a nice-to-have
+// indicator, not something the main report list should ever wait on.
+async function checkDueDates({ force = false } = {}) {
+  const enabledLeis = loadWatchlist().filter(isCompanyEnabled).map((c) => c.lei);
+  if (enabledLeis.length === 0) {
+    dueInfoByLei = {};
+    renderDueDatesPill();
+    return;
+  }
+
+  const cached = loadDueDatesCache();
+  const cacheCoversWatchlist = cached && enabledLeis.every((lei) => (cached.checkedLeis || []).includes(lei));
+  if (!force && cacheCoversWatchlist && Date.now() - cached.fetchedAt < DUE_DATES_CACHE_TTL_MS) {
+    dueInfoByLei = cached.dueInfo;
+    renderDueDatesPill();
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/due-dates?leis=${encodeURIComponent(enabledLeis.join(','))}`);
+    const { ok, data } = await parseJsonResponse(res);
+    if (!ok) return; // silently skip - this is a bonus indicator, not core functionality
+
+    dueInfoByLei = data.dueInfo || {};
+    saveDueDatesCache(dueInfoByLei, enabledLeis);
+    renderDueDatesPill();
+  } catch {
+    // Same reasoning as above - a failed due-date check shouldn't surface
+    // as an error anywhere the main report list is concerned with.
+  }
+}
+
+// Flattens dueInfoByLei into one row per flagged (due-soon/overdue)
+// report type, worst-first, with the company name resolved from the
+// current watchlist for display.
+function flaggedDueDates() {
+  const namesByLei = new Map(loadWatchlist().map((c) => [c.lei, c.name || c.lei]));
+  const rows = [];
+  for (const [lei, info] of Object.entries(dueInfoByLei)) {
+    for (const [key, label] of [['annual', 'Annual Financial Report'], ['halfYear', 'Half-year Financial Report']]) {
+      const entry = info[key];
+      if (entry && (entry.status === 'overdue' || entry.status === 'due-soon')) {
+        rows.push({ lei, name: namesByLei.get(lei) || lei, reportType: label, status: entry.status, lastFiledAt: entry.lastFiledAt });
+      }
+    }
+  }
+  rows.sort((a, b) => (a.status === b.status ? 0 : a.status === 'overdue' ? -1 : 1));
+  return rows;
+}
+
+function renderDueDatesPill() {
+  const pill = document.getElementById('due-dates-pill');
+  const rows = flaggedDueDates();
+  if (rows.length === 0) {
+    pill.hidden = true;
+    return;
+  }
+  pill.hidden = false;
+  pill.textContent = `⚠ ${rows.length} overdue/due soon`;
+}
+
+function renderDueDatesOverlay() {
+  const listEl = document.getElementById('due-dates-list');
+  const rows = flaggedDueDates();
+
+  listEl.innerHTML = '';
+  if (rows.length === 0) {
+    listEl.innerHTML = '<li class="hint">Nothing flagged right now.</li>';
+    return;
+  }
+
+  for (const row of rows) {
+    const li = document.createElement('li');
+    li.className = 'due-dates-row';
+    const lastFiled = row.lastFiledAt ? new Date(row.lastFiledAt).toLocaleDateString() : 'never seen';
+    li.innerHTML = `
+      <span class="due-dates-status due-dates-status-${row.status}">${row.status === 'overdue' ? 'Overdue' : 'Due soon'}</span>
+      <span class="due-dates-name">${escapeHtml(row.name)}</span>
+      <span class="due-dates-type">${escapeHtml(row.reportType)} - last filed ${escapeHtml(lastFiled)}</span>
+    `;
+    li.addEventListener('click', () => {
+      document.getElementById('due-dates-overlay').hidden = true;
+      openHistoryOverlay(row.lei, row.name);
+    });
+    listEl.appendChild(li);
+  }
+}
+
+document.getElementById('due-dates-pill').addEventListener('click', () => {
+  renderDueDatesOverlay();
+  document.getElementById('due-dates-overlay').hidden = false;
+});
+
+document.getElementById('due-dates-close').addEventListener('click', () => {
+  document.getElementById('due-dates-overlay').hidden = true;
+});
 
 // Reads a fetch Response as JSON, but tolerates a body that isn't valid
 // JSON (a plain-text 404 from a route that doesn't exist - e.g. a dev
@@ -1083,6 +1207,12 @@ async function loadReports() {
     // filters server-side, this is a short, focused list rather than a
     // market-wide dump.
     debugEl.textContent = JSON.stringify(data.scannedItems || [], null, 2);
+
+    // Not awaited - a nice-to-have indicator, not something a report
+    // reload should ever wait on. Cheap on every call after the first:
+    // checkDueDates() itself bails out fast once the watchlist's already
+    // covered by a fresh-enough cache.
+    checkDueDates();
   } catch (err) {
     statusEl.textContent = `Failed to load: ${err}`;
   }

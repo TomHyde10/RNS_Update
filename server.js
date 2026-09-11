@@ -25,7 +25,8 @@ for (const key of ['RESEND_API_KEY', 'NOTIFY_EMAIL_FROM', 'NOTIFY_EMAIL_TO', 'DA
   }
 }
 
-const { fetchReports, LEI_RE } = require('./lib/fetchReports');
+const { fetchReports, LEI_RE, MAX_WINDOW_DAYS } = require('./lib/fetchReports');
+const { computeDueInfo, HALF_YEAR, ANNUAL } = require('./lib/dueDates');
 const { buildRssFeed } = require('./lib/buildFeed');
 const { sendNotification } = require('./lib/sendNotification');
 const watchlist = require('./config/watchlist');
@@ -101,6 +102,32 @@ const server = http.createServer(async (req, res) => {
       : await fetchReports(resolved.query);
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(body));
+    return;
+  }
+
+  // Estimated Half-year/Annual Financial Report due status for the given
+  // companies - always a plain `leis` query param, never a view token
+  // (see lib/viewToken.js), since this is only ever called by the app's
+  // own UI for its own watchlist, not something meant to be a shareable
+  // link. Deliberately fetches the full MAX_WINDOW_DAYS regardless of
+  // whatever time period the main report list is currently showing - a
+  // company that's actually overdue is, by definition, unlikely to have
+  // filed within a short recent window, so this needs to look back much
+  // further than that to find its last filing at all.
+  if (parsed.pathname === '/api/due-dates') {
+    const leis = parsed.searchParams.get('leis');
+    const { status, body } = await fetchReports({
+      leis,
+      days: MAX_WINDOW_DAYS,
+      categories: `${HALF_YEAR.category},${ANNUAL.category}`,
+    });
+    if (status !== 200) {
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(body));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ dueInfo: computeDueInfo(body.reports) }));
     return;
   }
 
