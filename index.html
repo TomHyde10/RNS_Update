@@ -94,6 +94,12 @@
           </div>
         </form>
       </section>
+
+      <section id="notify-manager" class="panel">
+        <h2>Notification email</h2>
+        <p class="hint">Sent to: <span id="notify-email-display">not set</span></p>
+        <button type="button" id="notify-email-change">Set email</button>
+      </section>
     </aside>
 
     <main class="main-content">
@@ -134,6 +140,21 @@
       </div>
       <p id="history-status" class="hint"></p>
       <ul id="history-list" class="history-list"></ul>
+    </div>
+  </div>
+
+  <div id="notify-email-overlay" class="overlay" hidden>
+    <div class="overlay-card" role="dialog" aria-modal="true" aria-labelledby="notify-email-heading">
+      <h2 id="notify-email-heading">Where should notifications go?</h2>
+      <p class="hint">Enter the email address that should receive report notifications. This is saved in your browser and sent along with each "Send Notification" click.</p>
+      <form id="notify-email-form">
+        <input id="notify-email-input" type="email" placeholder="you@example.com" autocomplete="email" required />
+        <p id="notify-email-error" class="error" hidden></p>
+        <div class="settings-buttons">
+          <button type="submit">Save</button>
+          <button type="button" id="notify-email-cancel">Cancel</button>
+        </div>
+      </form>
     </div>
   </div>
 

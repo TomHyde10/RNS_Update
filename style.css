@@ -381,6 +381,16 @@ button:hover { border-color: var(--accent); }
 
 .report-meta { font-size: 0.85rem; color: var(--muted); }
 
+.report-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.report-actions button { font-size: 0.8rem; padding: 0.3rem 0.7rem; }
+.notify-status { font-size: 0.8rem; color: var(--muted); }
+
 .empty { color: var(--muted); list-style: none; }
 
 .overlay {
@@ -434,6 +444,23 @@ button:hover { border-color: var(--accent); }
 
 .overlay-card h2 { margin: 0 0 0.5rem; font-size: 1.05rem; }
 .overlay-header h2 { margin: 0; }
+
+#notify-email-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+#notify-email-input {
+  font: inherit;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+}
+
+#notify-email-display { color: var(--fg); font-weight: 600; }
 
 .overlay-close {
   border: none;
