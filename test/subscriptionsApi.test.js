@@ -160,6 +160,27 @@ describe('/api/subscriptions', () => {
     assert.equal(res.status, 404);
   });
 
+  it('send-test reaches sendTestDigest and surfaces its error rather than failing silently', async () => {
+    const created = await (await fetch(`${BASE_URL}/api/subscriptions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: ALLOWED_EMAIL, frequencyMinutes: 60, prefs: {} }),
+    })).json();
+
+    // Same "fails fast on missing RESEND_API_KEY, never touches the
+    // network" proof as the send-now test above, for the parallel
+    // send-test route.
+    const res = await fetch(`${BASE_URL}/api/subscriptions/${created.subscription.id}/send-test`, { method: 'POST' });
+    const data = await res.json();
+    assert.equal(res.status, 502);
+    assert.match(data.error, /Failed to send test/);
+  });
+
+  it('send-test on an unknown id returns 404', async () => {
+    const res = await fetch(`${BASE_URL}/api/subscriptions/does-not-exist/send-test`, { method: 'POST' });
+    assert.equal(res.status, 404);
+  });
+
   it('without APP_PASSWORD, only the fixed NOTIFY_EMAIL_TO address can be subscribed', async () => {
     const denied = await fetch(`${BASE_URL}/api/subscriptions`, {
       method: 'POST',

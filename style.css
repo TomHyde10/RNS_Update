@@ -898,7 +898,7 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
 
 .notifications-email-empty { padding: 0.5rem; }
 
-.notifications-send-now { font-size: 0.78rem; padding: 0.25rem 0.5rem; flex: 0 0 auto; }
+.notifications-send-now, .notifications-send-test { font-size: 0.78rem; padding: 0.25rem 0.5rem; flex: 0 0 auto; }
 
 /* Sits between .overlay-card-xl (a flex column) and .notifications-matrix-wrap
    (flex: 1 1 auto; min-height: 0, expecting to shrink and scroll within the

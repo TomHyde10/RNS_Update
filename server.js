@@ -32,9 +32,10 @@ const watchlist = require('./config/watchlist');
 const { checkBasicAuth, REALM } = require('./lib/basicAuth');
 const { sealView, openView, resolveReportQuery } = require('./lib/viewToken');
 const subscriptionStore = require('./lib/subscriptionStore');
-const { digestSendAllowed, sendDigestForSubscription } = require('./lib/sendDigest');
+const { digestSendAllowed, sendDigestForSubscription, sendTestDigest } = require('./lib/sendDigest');
 const digestScheduler = require('./lib/digestScheduler');
 const watchlistStore = require('./lib/watchlistStore');
+const seenStore = require('./lib/seenStore');
 
 const PORT = process.env.PORT || 3000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -185,6 +186,50 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Which report keys have already been shown to someone, shared across
+  // every visitor once DATABASE_URL is set - the same "New" badge, but
+  // reflecting what the team has seen rather than just this one browser.
+  // app.js falls back to localStorage itself when `enabled` is false here.
+  if (parsed.pathname === '/api/seen' && req.method === 'GET') {
+    if (!seenStore.enabled) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ enabled: false, keys: [] }));
+      return;
+    }
+    try {
+      const keys = await seenStore.listSeenKeys();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ enabled: true, keys }));
+    } catch (err) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Failed to load seen reports: ${err.message || err}` }));
+    }
+    return;
+  }
+
+  // Additive, not a full-list replace like /api/companies - the client
+  // only ever sends the keys of whatever's currently on screen, not an
+  // accumulated history (see markSeen() in lib/seenStore.js).
+  if (parsed.pathname === '/api/seen' && req.method === 'POST') {
+    readJsonBody(req, res, async (body) => {
+      if (!seenStore.enabled) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Shared seen-report tracking needs a database on this deployment (DATABASE_URL is not set).' }));
+        return;
+      }
+      const keys = Array.isArray(body.keys) ? body.keys.filter((k) => typeof k === 'string').slice(0, 5000) : [];
+      try {
+        await seenStore.markSeen(keys);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Failed to save seen reports: ${err.message || err}` }));
+      }
+    });
+    return;
+  }
+
   if (parsed.pathname === '/api/view' && req.method === 'GET') {
     const { view, status, error } = openView(parsed.searchParams.get('v'));
     res.writeHead(error ? status : 200, { 'Content-Type': 'application/json' });
@@ -321,6 +366,35 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: `Failed to send: ${err.message || err}` }));
+    }
+    return;
+  }
+
+  // Always sends a real email, regardless of whether anything is new or the
+  // subscription is even active - deliberately does NOT call markSent(), so
+  // testing delivery/formatting never disturbs the real recurring digest's
+  // "since last send" cursor.
+  if (parsed.pathname.startsWith('/api/subscriptions/') && parsed.pathname.endsWith('/send-test') && req.method === 'POST') {
+    const id = decodeURIComponent(parsed.pathname.slice('/api/subscriptions/'.length, -'/send-test'.length));
+    if (!subscriptionStore.enabled) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Automatic email digests need a database on this deployment (DATABASE_URL is not set).' }));
+      return;
+    }
+    try {
+      const subscriptions = await subscriptionStore.listSubscriptions();
+      const subscription = subscriptions.find((s) => s.id === id);
+      if (!subscription) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No subscription with that id.' }));
+        return;
+      }
+      const result = await sendTestDigest(subscription);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Failed to send test: ${err.message || err}` }));
     }
     return;
   }

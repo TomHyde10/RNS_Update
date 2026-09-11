@@ -181,7 +181,27 @@ function reportKey(r) {
   return r.id || `${r.lei}|${r.title}|${r.publishedAt}`;
 }
 
-function loadSeen() {
+// Where "seen" state actually lives: 'server' once DATABASE_URL is set on
+// this deployment (shared across every visitor, so a "New" badge reflects
+// what the team has seen, not just this one browser - see
+// lib/seenStore.js), or 'local' (this browser's localStorage only)
+// otherwise. Decided once at startup by initSeenBackend() below, unlike
+// the watchlist there's no in-memory cache to keep in sync - loadSeen()/
+// saveSeen() are only ever used from the one async loadReports() flow, so
+// they can just stay async themselves rather than needing that pattern.
+let seenBackend = 'local';
+
+async function initSeenBackend() {
+  try {
+    const res = await fetch('/api/seen');
+    const { ok, data } = await parseJsonResponse(res);
+    seenBackend = ok && data.enabled ? 'server' : 'local';
+  } catch {
+    seenBackend = 'local';
+  }
+}
+
+function loadSeenFromLocalStorage() {
   try {
     const raw = localStorage.getItem(SEEN_KEY);
     const arr = raw ? JSON.parse(raw) : [];
@@ -191,12 +211,44 @@ function loadSeen() {
   }
 }
 
-function saveSeen(set) {
+async function loadSeen() {
+  if (seenBackend !== 'server') return loadSeenFromLocalStorage();
+  try {
+    const res = await fetch('/api/seen');
+    const { ok, data } = await parseJsonResponse(res);
+    if (ok) return new Set(data.keys);
+  } catch {
+    // A transient network hiccup shouldn't make everything look "new" -
+    // fall back to whatever this browser already has cached locally.
+  }
+  return loadSeenFromLocalStorage();
+}
+
+// `newKeys` is just the reports currently on screen, not an accumulated
+// history - additive either way (server: INSERT ... ON CONFLICT DO
+// NOTHING; local: merged into `previousSet`, then capped) - so the caller
+// never has to compute the full merged set itself.
+async function saveSeen(newKeys, previousSet) {
+  if (seenBackend === 'server') {
+    if (newKeys.length === 0) return;
+    try {
+      await fetch('/api/seen', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys: newKeys }),
+      });
+    } catch (err) {
+      console.error('Failed to save seen reports:', err);
+    }
+    return;
+  }
+
+  const merged = new Set(previousSet);
+  for (const key of newKeys) merged.add(key);
   // Cap so this can't grow unbounded over months of use - Set iteration
   // preserves insertion order, so slicing from the end keeps the most
   // recently seen entries.
-  const arr = [...set].slice(-MAX_SEEN);
-  localStorage.setItem(SEEN_KEY, JSON.stringify(arr));
+  localStorage.setItem(SEEN_KEY, JSON.stringify([...merged].slice(-MAX_SEEN)));
 }
 
 function loadSort() {
@@ -949,7 +1001,7 @@ async function loadReports() {
     }));
     lastReports = resolvedReports;
 
-    const seenBefore = loadSeen();
+    const seenBefore = await loadSeen();
     const isBaseline = seenBefore.size === 0;
     const newReports = resolvedReports.filter((r) => !seenBefore.has(reportKey(r)));
     lastNewKeys = isBaseline ? new Set() : new Set(newReports.map(reportKey));
@@ -982,9 +1034,7 @@ async function loadReports() {
 
     renderReportsList();
 
-    const updatedSeen = new Set(seenBefore);
-    for (const report of resolvedReports) updatedSeen.add(reportKey(report));
-    saveSeen(updatedSeen);
+    saveSeen(resolvedReports.map(reportKey), seenBefore);
 
     if (!isBaseline && newReports.length > 0) {
       notifyNewReports(newReports, settings);
@@ -1190,8 +1240,9 @@ document.getElementById('refresh').addEventListener('click', loadReports);
 
 // Clears the "New" badges/highlight for whatever's currently on screen
 // without waiting for the next load - lastReports is already marked seen
-// in localStorage as of the load that produced it (see loadReports()), so
-// this only needs to reset the in-memory set that drives this render.
+// (server or localStorage, see saveSeen()) as of the load that produced
+// it, so this only needs to reset the in-memory set that drives this
+// render.
 document.getElementById('mark-seen').addEventListener('click', () => {
   lastNewKeys = new Set();
   document.getElementById('mark-seen').hidden = true;
@@ -1537,6 +1588,7 @@ function renderNotificationsEmailList() {
         ${NOTIFICATION_FREQUENCIES.map(([minutes, label]) => `<option value="${minutes}" ${minutes === (subscription.frequencyMinutes || 0) ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
       </select>
       <button type="button" class="notifications-send-now" title="Send this digest now, using whatever's new since its last send">Send now</button>
+      <button type="button" class="notifications-send-test" title="Send a real test email right now, with recent reports regardless of what's new - doesn't affect the digest's normal schedule">Send test</button>
       <button type="button" class="remove-company" aria-label="Remove ${escapeHtml(subscription.email)}" title="Remove this email">&times;</button>
     `;
 
@@ -1553,6 +1605,7 @@ function renderNotificationsEmailList() {
     li.querySelector('.notifications-email-frequency').addEventListener('click', (e) => e.stopPropagation());
 
     li.querySelector('.notifications-send-now').addEventListener('click', () => sendSubscriptionNow(subscription));
+    li.querySelector('.notifications-send-test').addEventListener('click', () => sendSubscriptionTest(subscription));
     li.querySelector('.remove-company').addEventListener('click', () => removeSubscription(subscription.id));
 
     listEl.appendChild(li);
@@ -1576,6 +1629,23 @@ async function sendSubscriptionNow(subscription) {
       : `Nothing new to send to ${subscription.email} right now.`);
   } catch (err) {
     showNotificationsStatus(`Failed to send: ${err.message || err}`);
+  }
+}
+
+// Unlike sendSubscriptionNow(), always sends a real email (recent reports,
+// or a placeholder if none matched) and never updates lastSentAt - purely
+// for confirming delivery/formatting on demand, without touching the
+// subscription's actual send schedule.
+async function sendSubscriptionTest(subscription) {
+  showNotificationsStatus(`Sending test to ${subscription.email}…`);
+  try {
+    const res = await fetch(`/api/subscriptions/${encodeURIComponent(subscription.id)}/send-test`, { method: 'POST' });
+    const { ok, status, data } = await parseJsonResponse(res);
+    if (!ok) throw new Error(data.error || `Couldn't send (${status})`);
+
+    showNotificationsStatus(`Test sent to ${subscription.email}: ${data.count} report${data.count === 1 ? '' : 's'}.`);
+  } catch (err) {
+    showNotificationsStatus(`Failed to send test: ${err.message || err}`);
   }
 }
 
@@ -1724,11 +1794,12 @@ document.getElementById('notifications-email-add').addEventListener('click', asy
   initWatchlistCollapse();
   initSettingsCollapse();
   initSidebarResize();
-  // initWatchlist() first: it decides which backend the watchlist lives
-  // in and populates the in-memory cache from it - adoptUrlParams() below
-  // reads/writes that same cache (merging any LEIs from a shared link),
-  // so it needs that cache populated first, not the other way around.
-  await initWatchlist();
+  // initWatchlist() (which decides which backend the watchlist lives in
+  // and populates the in-memory cache from it) and initSeenBackend() are
+  // independent of each other, but adoptUrlParams() below reads/writes
+  // the watchlist cache (merging any LEIs from a shared link), so it
+  // needs initWatchlist() done first - not the other way around.
+  await Promise.all([initWatchlist(), initSeenBackend()]);
   await adoptUrlParams();
   initSettingsForm();
   initAutoRefreshControl();
