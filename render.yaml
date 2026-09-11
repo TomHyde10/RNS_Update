@@ -6,25 +6,13 @@ services:
     buildCommand: npm install
     startCommand: npm start
     envVars:
-      # Fixed values for sending via SendGrid's SMTP relay - filled in
-      # already so you only need to set the two secrets below in the Render
-      # dashboard. SMTP_USER is always the literal string "apikey" for
-      # SendGrid (not a placeholder - that's genuinely the username SendGrid
-      # expects; the real secret is the API key in SMTP_PASS). See the
-      # "Email notifications" section in README.md for full setup steps
-      # (account signup, sender verification, creating the API key). Email
-      # notifications are entirely optional - the app runs fine with none of
-      # this set, just without the "Send Notification" button working.
-      - key: SMTP_HOST
-        value: smtp.sendgrid.net
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_USER
-        value: apikey
-      # sync: false means Render will prompt for these in the dashboard
-      # instead of reading a value from this file - so the real API key and
-      # sender address are never committed to the repo.
-      - key: SMTP_PASS
+      # Sends via the Resend API (see README.md's "Email notifications"
+      # section for signup/verification/API-key steps). Entirely optional -
+      # the app runs fine with neither set, just without the "Send
+      # Notification" button working. sync: false means Render prompts for
+      # these in the dashboard instead of reading a value from this file -
+      # so the real API key and sender address are never committed here.
+      - key: RESEND_API_KEY
         sync: false
       - key: NOTIFY_EMAIL_FROM
         sync: false
