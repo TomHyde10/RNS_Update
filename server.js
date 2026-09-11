@@ -16,7 +16,7 @@ const { URL } = require('url');
 // Runs before the lib/ requires below, since lib/cacheStore.js reads
 // DATABASE_URL at load time.
 const SECRET_FILE_DIR = process.env.SECRET_FILE_DIR || '/etc/secrets';
-for (const key of ['RESEND_API_KEY', 'NOTIFY_EMAIL_FROM', 'NOTIFY_EMAIL_TO', 'DATABASE_URL', 'DATABASE_SSL_CA', 'APP_USERNAME', 'APP_PASSWORD']) {
+for (const key of ['RESEND_API_KEY', 'NOTIFY_EMAIL_FROM', 'NOTIFY_EMAIL_TO', 'DATABASE_URL', 'DATABASE_SSL_CA', 'APP_USERNAME', 'APP_PASSWORD', 'VIEW_TOKEN_SECRET']) {
   if (process.env[key]) continue;
   try {
     process.env[key] = fs.readFileSync(path.join(SECRET_FILE_DIR, key), 'utf8').trim();
@@ -30,6 +30,7 @@ const { buildRssFeed } = require('./lib/buildFeed');
 const { sendNotification } = require('./lib/sendNotification');
 const watchlist = require('./config/watchlist');
 const { checkBasicAuth, REALM } = require('./lib/basicAuth');
+const { sealView, openView, resolveReportQuery } = require('./lib/viewToken');
 
 const PORT = process.env.PORT || 3000;
 
@@ -39,6 +40,35 @@ const STATIC_FILES = {
   '/style.css': { file: 'style.css', type: 'text/css' },
   '/app.js': { file: 'app.js', type: 'text/javascript' },
 };
+
+// Reads a POST's JSON body and passes it to onBody, or responds with an error
+// itself. Any non-JSON Content-Type is rejected first: browsers resend cached
+// Basic Auth credentials automatically, so a cross-site <form> post
+// (text/plain, urlencoded, multipart - no CORS preflight) could otherwise act
+// as a logged-in visitor. Requiring application/json forces a preflight,
+// which never succeeds here (preflights carry no credentials, and no CORS
+// headers are sent).
+function readJsonBody(req, res, onBody) {
+  if ((req.headers['content-type'] || '').split(';')[0].trim().toLowerCase() !== 'application/json') {
+    res.writeHead(415, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Content-Type must be application/json' }));
+    return;
+  }
+
+  let raw = '';
+  req.on('data', (chunk) => { raw += chunk; });
+  req.on('end', () => {
+    let body;
+    try {
+      body = JSON.parse(raw || '{}');
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+      return;
+    }
+    onBody(body);
+  });
+}
 
 const server = http.createServer(async (req, res) => {
   // Gated on every request, before any routing - protects the static
@@ -54,22 +84,20 @@ const server = http.createServer(async (req, res) => {
   const parsed = new URL(req.url, `http://${req.headers.host}`);
 
   if (parsed.pathname === '/api/reports') {
-    const { status, body } = await fetchReports({
-      leis: parsed.searchParams.get('leis'),
-      days: parsed.searchParams.get('days'),
-      categories: parsed.searchParams.get('categories'),
-    });
+    const resolved = resolveReportQuery((key) => parsed.searchParams.get(key));
+    const { status, body } = resolved.error
+      ? { status: resolved.status, body: { error: resolved.error } }
+      : await fetchReports(resolved.query);
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(body));
     return;
   }
 
   if (parsed.pathname === '/api/feed') {
-    const { status, body } = await fetchReports({
-      leis: parsed.searchParams.get('leis'),
-      days: parsed.searchParams.get('days'),
-      categories: parsed.searchParams.get('categories'),
-    });
+    const resolved = resolveReportQuery((key) => parsed.searchParams.get(key));
+    const { status, body } = resolved.error
+      ? { status: resolved.status, body: { error: resolved.error } }
+      : await fetchReports(resolved.query);
 
     if (status !== 200) {
       res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -97,29 +125,24 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (parsed.pathname === '/api/notify' && req.method === 'POST') {
-    // Browsers resend cached Basic Auth credentials automatically, so a
-    // cross-site <form> post (text/plain, urlencoded, multipart - no CORS
-    // preflight) could otherwise trigger an email from a logged-in visitor.
-    // Requiring application/json forces a preflight, which never succeeds
-    // here (preflights carry no credentials, and no CORS headers are sent).
-    if ((req.headers['content-type'] || '').split(';')[0].trim().toLowerCase() !== 'application/json') {
-      res.writeHead(415, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Content-Type must be application/json' }));
-      return;
-    }
+  if (parsed.pathname === '/api/view' && req.method === 'GET') {
+    const { view, status, error } = openView(parsed.searchParams.get('v'));
+    res.writeHead(error ? status : 200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(error ? { error } : view));
+    return;
+  }
 
-    let raw = '';
-    req.on('data', (chunk) => { raw += chunk; });
-    req.on('end', async () => {
-      let body;
-      try {
-        body = JSON.parse(raw || '{}');
-      } catch {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Invalid JSON body' }));
-        return;
-      }
+  if (parsed.pathname === '/api/view' && req.method === 'POST') {
+    readJsonBody(req, res, (body) => {
+      const { token, status, error } = sealView(body);
+      res.writeHead(error ? status : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(error ? { error } : { token }));
+    });
+    return;
+  }
+
+  if (parsed.pathname === '/api/notify' && req.method === 'POST') {
+    readJsonBody(req, res, async (body) => {
       const { status, ...result } = await sendNotification(body);
       res.writeHead(result.ok ? 200 : status || 502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));

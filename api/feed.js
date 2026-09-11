@@ -1,13 +1,18 @@
 // Vercel Node serverless function: GET /api/feed?leis=<a,b,c>&days=<n>&categories=<a,b,c>
 // Same query params as /api/reports, returned as an RSS 2.0 feed instead of
 // JSON, so any feed reader can watch this list without the app needing its
-// own notification/email pipeline.
+// own notification/email pipeline. Also accepts ?v=<encrypted view token>
+// (see lib/viewToken.js).
 const { fetchReports } = require('../lib/fetchReports');
 const { buildRssFeed } = require('../lib/buildFeed');
+const { resolveReportQuery } = require('../lib/viewToken');
 
 module.exports = async (req, res) => {
   const q = req.query || {};
-  const { status, body } = await fetchReports({ leis: q.leis, days: q.days, categories: q.categories });
+  const resolved = resolveReportQuery((key) => q[key]);
+  const { status, body } = resolved.error
+    ? { status: resolved.status, body: { error: resolved.error } }
+    : await fetchReports(resolved.query);
 
   if (status !== 200) {
     res.status(status).json(body);

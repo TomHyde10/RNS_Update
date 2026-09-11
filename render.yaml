@@ -16,3 +16,8 @@ services:
         sync: false
       - key: NOTIFY_EMAIL_FROM
         sync: false
+      # Encrypts shareable links and the RSS feed URL (see README.md's
+      # "Encrypted view links"). generateValue has Render create a random
+      # secret once, so nothing sensitive is committed here either.
+      - key: VIEW_TOKEN_SECRET
+        generateValue: true

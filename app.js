@@ -538,8 +538,38 @@ function renderReportsList() {
   }
 }
 
-// Merges companies/settings carried in the URL's query string (see
-// syncUrlWithState, called at the end of every successful loadReports())
+// Encrypted view links (lib/viewToken.js): when the deployment has
+// VIEW_TOKEN_SECRET set, the address bar, the RSS feed link, and this app's
+// own /api/reports requests all carry one opaque `v` token instead of
+// readable leis/days/categories params. POST /api/view returning a null
+// token means no secret is configured, so readable params are used for the
+// rest of the session.
+let viewTokensAvailable = true;
+const viewTokenCache = new Map(); // JSON of a view -> its token, so an unchanged view keeps the same link
+let urlViewError = null;
+
+// `view` is { leis, days, categories } as strings (any may be omitted).
+// Returns the query string to use for it: `v=<token>`, or readable params.
+async function viewQueryString(view) {
+  const readable = new URLSearchParams(view).toString();
+  if (!viewTokensAvailable) return readable;
+
+  const key = JSON.stringify(view);
+  if (!viewTokenCache.has(key)) {
+    const res = await fetch('/api/view', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: key });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Couldn't create a view link (${res.status})`);
+    if (!data.token) {
+      viewTokensAvailable = false;
+      return readable;
+    }
+    viewTokenCache.set(key, data.token);
+  }
+  return new URLSearchParams({ v: viewTokenCache.get(key) }).toString();
+}
+
+// Merges companies/settings carried in the URL - a `v` token or readable
+// params (see syncUrlWithState, called on every loadReports())
 // into whatever's already saved - purely additive for companies (never
 // removes or replaces an existing one), so opening someone's shared link
 // can only add to your list, never silently clobber it. Settings
@@ -549,11 +579,32 @@ function parseLeisFromParam(param) {
   return [...new Set((param || '').split(',').map((s) => s.trim().toUpperCase()).filter((s) => LEI_RE.test(s)))];
 }
 
-function adoptUrlParams() {
+async function adoptUrlParams() {
   const params = new URLSearchParams(window.location.search);
-  const urlLeis = parseLeisFromParam(params.get('leis'));
-  const daysParam = parseInt(params.get('days'), 10);
-  const categoriesParam = (params.get('categories') || '').split(',').map((s) => s.trim()).filter(Boolean);
+  let leisValue = params.get('leis');
+  let daysValue = params.get('days');
+  let categoriesValue = params.get('categories');
+
+  const token = params.get('v');
+  if (token) {
+    try {
+      const res = await fetch(`/api/view?${new URLSearchParams({ v: token })}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.status);
+      leisValue = data.leis.join(',');
+      daysValue = String(data.days);
+      categoriesValue = data.categories.join(',');
+      // Reopening your own link then keeps the same token in the address bar.
+      viewTokenCache.set(JSON.stringify({ leis: leisValue, days: daysValue, categories: categoriesValue }), token);
+    } catch (err) {
+      urlViewError = `Couldn't open this link (${err.message || err}) - showing your saved view instead.`;
+      return;
+    }
+  }
+
+  const urlLeis = parseLeisFromParam(leisValue);
+  const daysParam = parseInt(daysValue, 10);
+  const categoriesParam = (categoriesValue || '').split(',').map((s) => s.trim()).filter(Boolean);
 
   if (urlLeis.length > 0) {
     const watchlist = loadWatchlist();
@@ -579,8 +630,8 @@ function adoptUrlParams() {
   }
 }
 
-function syncUrlWithState(params) {
-  window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
+function syncUrlWithState(query) {
+  window.history.replaceState(null, '', `${window.location.pathname}?${query}`);
 }
 
 async function loadReports() {
@@ -606,15 +657,15 @@ async function loadReports() {
 
   try {
     const leis = watchlist.map((c) => c.lei).join(',');
-    const params = new URLSearchParams({
+    const query = await viewQueryString({
       leis,
       days: String(settings.days),
       categories: settings.categories.join(','),
     });
-    feedLink.href = `/api/feed?${params.toString()}`;
-    syncUrlWithState(params);
+    feedLink.href = `/api/feed?${query}`;
+    syncUrlWithState(query);
 
-    const res = await fetch(`/api/reports?${params.toString()}`);
+    const res = await fetch(`/api/reports?${query}`);
     const data = await res.json();
 
     if (!res.ok) {
@@ -710,8 +761,8 @@ async function openHistoryOverlay(lei, displayName, { force = false } = {}) {
   statusEl.textContent = 'Loading…';
 
   try {
-    const params = new URLSearchParams({ leis: lei, days: '365' });
-    const res = await fetch(`/api/reports?${params.toString()}`);
+    const query = await viewQueryString({ leis: lei, days: '365' });
+    const res = await fetch(`/api/reports?${query}`);
     const data = await res.json();
 
     if (!res.ok) {
@@ -842,11 +893,15 @@ document.getElementById('notify-email-change').addEventListener('click', () => {
 (async () => {
   initTheme();
   initWatchlistCollapse();
-  adoptUrlParams();
+  await adoptUrlParams();
   await initWatchlist();
   initSettingsForm();
   initReportControls();
   renderWatchlist();
   renderNotifyEmailDisplay();
-  loadReports();
+  await loadReports();
+  if (urlViewError) {
+    const statusEl = document.getElementById('status');
+    statusEl.textContent = `${urlViewError} ${statusEl.textContent}`;
+  }
 })();

@@ -51,7 +51,9 @@ hitting the API directly).
   title, category, date, link) as a CSV file — a quick audit trail outside
   the browser.
 - **RSS feed**: the "RSS feed" link points at `/api/feed` with your current
-  watchlist/time-period/category settings baked in as query params — paste
+  watchlist/time-period/category settings baked in (as an encrypted token
+  when `VIEW_TOKEN_SECRET` is set — see "Encrypted view links" — otherwise
+  as readable query params) — paste
   that URL into any feed reader to get "new report" notifications without
   this app needing to run its own email/push pipeline. See `lib/buildFeed.js`.
 - **Per-company filing history**: the clock icon next to each company in the
@@ -80,10 +82,12 @@ hitting the API directly).
   the fact that the watchlist otherwise lives only in one browser's
   `localStorage` with no backup.
 - **Shareable URL**: the address bar always reflects your current
-  companies/time-period/categories as query params after a load (via
+  companies/time-period/categories after a load (via
   `history.replaceState`, so it doesn't spam browser history) — copy it to
-  bookmark or share a specific view. Opening a link with `leis`/`days`/
-  `categories` params **only ever adds** those companies to your watchlist
+  bookmark or share a specific view. That's a single encrypted `v` param
+  when `VIEW_TOKEN_SECRET` is set (see "Encrypted view links"), otherwise
+  readable `leis`/`days`/`categories` params. Opening either kind of link
+  **only ever adds** those companies to your watchlist
   (or adopts the days/categories as your active settings) — it never removes
   or replaces anything already saved, so a shared link can't clobber your
   list even if it names totally different companies.
@@ -219,6 +223,38 @@ anonymous visitor from triggering the "Send Notification" button (which
 sends real email from this deployment's verified domain) — protecting the
 whole app was simpler and more robust than gating that one endpoint alone.
 
+## Encrypted view links
+
+By default, shareable links and the RSS feed URL carry your companies and
+settings as readable query params (`?leis=…&days=7&categories=…`). Anyone
+who sees the URL can read them, including through browser history, your
+hosting provider's request logs, screenshots, and link previews in chat
+apps. Set `VIEW_TOKEN_SECRET` to replace them with a single encrypted
+`?v=<token>` param. The address bar, the RSS feed link, and the app's own
+`/api/reports` requests all switch to it.
+
+- **How it works** (`lib/viewToken.js`, `/api/view`): the browser POSTs its
+  current view to `/api/view`, and the server returns it compressed and
+  encrypted with AES-256-GCM, under a key derived from `VIEW_TOKEN_SECRET`.
+  The key never leaves the server. Opening a link sends the token back to
+  `/api/view` to decrypt, and `/api/reports`/`/api/feed` accept `v`
+  directly. An edited or truncated token is rejected rather than opening a
+  different view.
+- **What it doesn't do:** anyone who opens a link still sees that view. The
+  server decrypts it for them, and opening it adds its companies to their
+  watchlist as before, so `APP_PASSWORD` is still what controls access. A
+  token's length also hints at roughly how many companies it holds.
+- **The secret** must be at least 32 characters (e.g. the output of
+  `openssl rand -base64 32`). Set it like any other secret, as an env var or
+  a secret file. The Render Blueprint generates one automatically.
+- **Changing the secret breaks every existing encrypted link and RSS feed
+  subscription.** They'll show "Invalid view link" and need re-copying from
+  the app.
+- **Without it**, nothing changes and links stay readable. Readable links
+  (old bookmarks, existing feed subscriptions) also keep working after you
+  enable it, and the address bar switches to the encrypted form on the next
+  load.
+
 ## Deploying (Vercel)
 
 This repo needs no build step — Vercel's zero-config Node setup serves the
@@ -279,8 +315,8 @@ so it works the same way here: no serverless function support needed,
 Some Northflank plans/projects only offer **Secret Files** (mount a file
 into the container), not individual **Secret Variables**. `server.js`
 handles this itself: for `RESEND_API_KEY`, `NOTIFY_EMAIL_FROM`,
-`NOTIFY_EMAIL_TO`, `DATABASE_URL`, `DATABASE_SSL_CA`, `APP_USERNAME`, and
-`APP_PASSWORD`, if the real environment variable
+`NOTIFY_EMAIL_TO`, `DATABASE_URL`, `DATABASE_SSL_CA`, `APP_USERNAME`,
+`APP_PASSWORD`, and `VIEW_TOKEN_SECRET`, if the real environment variable
 isn't set, it falls back to reading a file named exactly after that
 variable under `/etc/secrets` (e.g. `/etc/secrets/RESEND_API_KEY`) and uses
 its trimmed contents as the value — no environment variable needed at all.
@@ -473,13 +509,15 @@ api/reports.js                  Vercel serverless function: GET /api/reports
 api/watchlist.js                Vercel serverless function: GET /api/watchlist (seeds a fresh browser)
 api/feed.js                     Vercel serverless function: GET /api/feed (RSS feed of matching reports)
 api/notify.js                   Vercel serverless function: POST /api/notify (email a report - see "Email notifications")
+api/view.js                     Vercel serverless function: POST/GET /api/view (create/open encrypted view links - see "Encrypted view links")
+lib/viewToken.js                AES-256-GCM view tokens for shareable links and /api/reports + /api/feed (shared by api/ and server.js)
 lib/fetchReports.js             NSM search call + filtering logic (shared by api/ and server.js)
 lib/cacheStore.js               Optional Postgres-backed NSM cache (used when DATABASE_URL is set - see README)
 lib/buildFeed.js                Builds the RSS 2.0 XML for /api/feed (shared by api/ and server.js)
 lib/sendNotification.js         Email sending via the Resend API (shared by api/ and server.js)
 lib/basicAuth.js                HTTP Basic Auth check used by server.js (see "Authentication") - Vercel's middleware.js re-implements the same check separately
 middleware.js                   Vercel Edge Middleware - the Vercel-side half of "Authentication", gates every route before it reaches api/ or the static files
-server.js                       Plain Node dev server (static files + /api/reports + /api/watchlist + /api/feed + /api/notify)
+server.js                       Plain Node dev server (static files + /api/reports + /api/watchlist + /api/feed + /api/notify + /api/view)
 config/watchlist.js             Default company list - seeds a fresh browser, and fallback for /api/reports called with no `leis` param
 Dockerfile, .dockerignore       Fallback build path for Northflank (or anywhere else that wants a container) - see "Deploying (Northflank)"
 ```
