@@ -14,6 +14,17 @@
     </div>
     <div class="header-actions">
       <button type="button" id="debug-button" class="diagnostics-button" title="Show every scanned item, for diagnosing a missing report">Diagnostics</button>
+      <label class="theme-toggle" title="Auto-refresh - when on and this tab is in the background, a browser notification pops up for newly-seen reports (needs notification permission)">
+        <span aria-hidden="true">⟳</span>
+        <select id="auto-refresh-select">
+          <option value="0">Auto-refresh off</option>
+          <option value="5">Every 5 min</option>
+          <option value="15">Every 15 min</option>
+          <option value="30">Every 30 min</option>
+        </select>
+      </label>
+      <span id="last-updated" class="header-last-updated"></span>
+      <button id="refresh">Refresh</button>
       <label class="theme-toggle">
         Theme
         <select id="theme-select">
@@ -65,15 +76,10 @@
           <p class="hint">Matched exactly against the filing category (case-insensitive).</p>
 
           <label>
-            Auto-refresh
-            <select id="auto-refresh-select">
-              <option value="0">Off</option>
-              <option value="5">Every 5 minutes</option>
-              <option value="15">Every 15 minutes</option>
-              <option value="30">Every 30 minutes</option>
-            </select>
+            Keyword
+            <input id="keyword-input" type="text" autocomplete="off" placeholder="e.g. delisting, merger" />
           </label>
-          <p class="hint">When on and this tab is in the background, a browser notification pops up for newly-seen reports (needs notification permission).</p>
+          <p class="hint">Also includes filings whose title mentions this, regardless of the report types above.</p>
 
           <div class="settings-buttons">
             <button type="submit">Apply</button>
@@ -83,13 +89,15 @@
       </details>
     </aside>
 
+    <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" tabindex="0"></div>
+
     <main class="main-content">
       <div id="reports-header">
         <p id="status">Loading…</p>
         <div class="reports-header-actions">
           <a id="feed-link" href="#" target="_blank" rel="noopener" title="Subscribe in a feed reader">RSS feed</a>
           <button type="button" id="export-csv">Download CSV</button>
-          <button id="refresh">Refresh</button>
+          <button type="button" id="mark-seen" hidden>Mark all as seen</button>
         </div>
       </div>
       <div id="reports-controls">
@@ -128,6 +136,7 @@
         </div>
       </div>
       <p id="history-status" class="hint"></p>
+      <div id="history-activity" class="history-activity" hidden></div>
       <ul id="history-list" class="history-list"></ul>
     </div>
   </div>
@@ -171,6 +180,7 @@
         <h2 id="edit-company-heading">Edit companies</h2>
         <button type="button" id="edit-company-close" class="overlay-close" aria-label="Close">&times;</button>
       </div>
+      <input type="text" id="edit-company-filter" placeholder="Filter by name or LEI…" autocomplete="off" />
       <ul id="edit-company-list" class="edit-company-list"></ul>
       <div class="watchlist-io">
         <button type="button" id="watchlist-export">Export list</button>
@@ -192,45 +202,28 @@
       <p id="notifications-unavailable" class="hint" hidden>Automatic email digests need a database configured on this deployment (DATABASE_URL) - ask whoever manages it to set one up.</p>
 
       <div id="notifications-body">
-        <div class="notifications-toolbar">
-          <label class="notifications-field">
-            Email
-            <select id="notifications-email-select"></select>
-          </label>
-          <button type="button" id="notifications-email-remove">Remove this email</button>
-          <label class="notifications-field">
-            Frequency
-            <select id="notifications-frequency">
-              <option value="0">Paused</option>
-              <option value="60">Every hour</option>
-              <option value="360">Every 6 hours</option>
-              <option value="1440">Daily</option>
-              <option value="10080">Weekly</option>
-            </select>
-          </label>
-        </div>
         <div class="notifications-add-row">
-          <input type="email" id="notifications-new-email" placeholder="Add another email…" autocomplete="off" />
+          <input type="email" id="notifications-new-email" placeholder="Add an email address…" autocomplete="off" />
           <button type="button" id="notifications-email-add">Add</button>
         </div>
         <p id="notifications-status" class="hint" hidden></p>
 
+        <ul id="notifications-email-list" class="notifications-email-list"></ul>
+
+        <p id="notifications-editing-label" class="hint" hidden></p>
+
+        <div class="notifications-bulk-row">
+          <span class="notifications-bulk-label">Apply to every trust:</span>
+          <button type="button" class="notifications-bulk-chip" data-category="Half-year Financial Report">Half-year</button>
+          <button type="button" class="notifications-bulk-chip" data-category="Annual Financial Report">Annual</button>
+          <button type="button" class="notifications-bulk-chip" data-category="Net Asset Value(s)">NAV</button>
+          <button type="button" class="notifications-bulk-chip" data-category="Dividend Declaration">Dividend</button>
+          <button type="button" class="notifications-bulk-chip" data-category="Portfolio Update">Portfolio</button>
+          <button type="button" class="notifications-bulk-chip" data-category="Miscellaneous">Misc</button>
+        </div>
+
         <div class="notifications-matrix-wrap">
-          <table class="notifications-matrix">
-            <thead>
-              <tr>
-                <th>Trust</th>
-                <th>All types</th>
-                <th><label class="notifications-col-toggle">Half-year<input type="checkbox" class="notifications-col-all" data-category="Half-year Financial Report" title="Toggle for every trust" /></label></th>
-                <th><label class="notifications-col-toggle">Annual<input type="checkbox" class="notifications-col-all" data-category="Annual Financial Report" title="Toggle for every trust" /></label></th>
-                <th><label class="notifications-col-toggle">NAV<input type="checkbox" class="notifications-col-all" data-category="Net Asset Value(s)" title="Toggle for every trust" /></label></th>
-                <th><label class="notifications-col-toggle">Dividend<input type="checkbox" class="notifications-col-all" data-category="Dividend Declaration" title="Toggle for every trust" /></label></th>
-                <th><label class="notifications-col-toggle">Portfolio<input type="checkbox" class="notifications-col-all" data-category="Portfolio Update" title="Toggle for every trust" /></label></th>
-                <th><label class="notifications-col-toggle">Misc<input type="checkbox" class="notifications-col-all" data-category="Miscellaneous" title="Toggle for every trust" /></label></th>
-              </tr>
-            </thead>
-            <tbody id="notifications-matrix-body"></tbody>
-          </table>
+          <ul id="notifications-matrix-body" class="notifications-trust-list"></ul>
         </div>
       </div>
     </div>

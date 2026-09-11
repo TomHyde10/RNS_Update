@@ -239,6 +239,40 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Manually triggers a real send for one subscription right now, using the
+  // same sendDigestForSubscription()+markSent() the scheduler itself calls -
+  // not a fake "test" email, an actual early send, so someone setting up a
+  // digest can confirm delivery/formatting works without waiting for its
+  // frequency to come due. If nothing's matched since the last send, this
+  // still returns 200 with sent:false - "nothing new right now" is a normal
+  // outcome, not an error.
+  if (parsed.pathname.startsWith('/api/subscriptions/') && parsed.pathname.endsWith('/send-now') && req.method === 'POST') {
+    const id = decodeURIComponent(parsed.pathname.slice('/api/subscriptions/'.length, -'/send-now'.length));
+    if (!subscriptionStore.enabled) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Automatic email digests need a database on this deployment (DATABASE_URL is not set).' }));
+      return;
+    }
+    try {
+      const subscriptions = await subscriptionStore.listSubscriptions();
+      const subscription = subscriptions.find((s) => s.id === id);
+      if (!subscription) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No subscription with that id.' }));
+        return;
+      }
+      const result = await sendDigestForSubscription(subscription);
+      const sentAt = new Date();
+      await subscriptionStore.markSent(subscription.id, sentAt);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ...result, lastSentAt: sentAt.toISOString() }));
+    } catch (err) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Failed to send: ${err.message || err}` }));
+    }
+    return;
+  }
+
   if (parsed.pathname.startsWith('/api/subscriptions/') && req.method === 'DELETE') {
     const id = decodeURIComponent(parsed.pathname.slice('/api/subscriptions/'.length));
     if (!subscriptionStore.enabled) {

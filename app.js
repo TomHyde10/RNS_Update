@@ -7,6 +7,10 @@ const THEME_KEY = 'rns-theme';
 const NOTIFY_EMAIL_KEY = 'rns-notify-email';
 const WATCHLIST_COLLAPSED_KEY = 'rns-watchlist-collapsed';
 const SETTINGS_COLLAPSED_KEY = 'rns-settings-collapsed';
+const SIDEBAR_WIDTH_KEY = 'rns-sidebar-width';
+const SIDEBAR_WIDTH_DEFAULT = 280;
+const SIDEBAR_WIDTH_MIN = 200;
+const SIDEBAR_WIDTH_MAX = 480;
 const LEI_RE = /^[A-Z0-9]{20}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEFAULT_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report'];
@@ -98,9 +102,10 @@ function loadSettings() {
     const autoRefreshMinutes = [0, 5, 15, 30].includes(parseInt(parsed.autoRefreshMinutes, 10))
       ? parseInt(parsed.autoRefreshMinutes, 10)
       : 0;
-    return { days: Number.isNaN(days) ? 7 : days, categories, autoRefreshMinutes };
+    const keyword = typeof parsed.keyword === 'string' ? parsed.keyword.trim() : '';
+    return { days: Number.isNaN(days) ? 7 : days, categories, autoRefreshMinutes, keyword };
   } catch {
-    return { days: 7, categories: DEFAULT_CATEGORIES, autoRefreshMinutes: 0 };
+    return { days: 7, categories: DEFAULT_CATEGORIES, autoRefreshMinutes: 0, keyword: '' };
   }
 }
 
@@ -205,6 +210,62 @@ function initSettingsCollapse() {
   details.open = localStorage.getItem(SETTINGS_COLLAPSED_KEY) === 'false';
   details.addEventListener('toggle', () => {
     localStorage.setItem(SETTINGS_COLLAPSED_KEY, String(!details.open));
+  });
+}
+
+// Drag handle between the sidebar and the reports table - width is a CSS
+// custom property on .layout (see style.css) rather than a class/inline
+// width on .sidebar itself, so both the sidebar and the drag handle's own
+// grid column move together from one source of truth. Persisted per
+// browser like the other small UI preferences (theme, collapse state).
+function initSidebarResize() {
+  const layoutEl = document.querySelector('.layout');
+  const resizer = document.getElementById('sidebar-resizer');
+  if (!layoutEl || !resizer) return;
+
+  let width = parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY), 10);
+  if (Number.isNaN(width)) width = SIDEBAR_WIDTH_DEFAULT;
+
+  function applyWidth(px) {
+    width = Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, px));
+    layoutEl.style.setProperty('--sidebar-width', `${width}px`);
+  }
+
+  applyWidth(width);
+
+  let dragging = false;
+
+  resizer.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    resizer.setPointerCapture(e.pointerId);
+    resizer.classList.add('is-dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  });
+
+  resizer.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    applyWidth(e.clientX - layoutEl.getBoundingClientRect().left);
+  });
+
+  function stopDragging() {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove('is-dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+  }
+  resizer.addEventListener('pointerup', stopDragging);
+  resizer.addEventListener('pointercancel', stopDragging);
+
+  // Keyboard equivalent for the drag - the resizer is a focusable
+  // role="separator", the standard pattern for an accessible splitter.
+  resizer.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    applyWidth(width + (e.key === 'ArrowRight' ? 16 : -16));
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+    e.preventDefault();
   });
 }
 
@@ -354,11 +415,19 @@ function renameCompany(lei, name) {
 // the history/remove actions.
 function renderEditCompanyList() {
   const listEl = document.getElementById('edit-company-list');
-  const watchlist = loadWatchlist();
+  const filterText = document.getElementById('edit-company-filter').value.trim().toLowerCase();
+  const fullWatchlist = loadWatchlist();
+  const watchlist = filterText
+    ? fullWatchlist.filter((c) => (c.name || '').toLowerCase().includes(filterText) || c.lei.toLowerCase().includes(filterText))
+    : fullWatchlist;
 
   listEl.innerHTML = '';
-  if (watchlist.length === 0) {
+  if (fullWatchlist.length === 0) {
     listEl.innerHTML = '<li class="hint">No companies yet - use Add companies to get started.</li>';
+    return;
+  }
+  if (watchlist.length === 0) {
+    listEl.innerHTML = '<li class="hint">No companies match your filter.</li>';
     return;
   }
 
@@ -681,6 +750,16 @@ async function viewQueryString(view) {
   return new URLSearchParams({ v: viewTokenCache.get(key) }).toString();
 }
 
+// Appends `keyword` to an already-built query string (from viewQueryString
+// above) rather than being part of the `view` it encrypts - see the
+// matching comment on resolveReportQuery() in lib/viewToken.js for why.
+function withKeyword(query, keyword) {
+  if (!keyword) return query;
+  const params = new URLSearchParams(query);
+  params.set('keyword', keyword);
+  return params.toString();
+}
+
 // Merges companies/settings carried in the URL - a `v` token or readable
 // params (see syncUrlWithState, called on every loadReports())
 // into whatever's already saved - purely additive for companies (never
@@ -697,6 +776,10 @@ async function adoptUrlParams() {
   let leisValue = params.get('leis');
   let daysValue = params.get('days');
   let categoriesValue = params.get('categories');
+  // Never part of the `v` token's payload (see withKeyword()/resolveReportQuery()),
+  // so unlike the three above it's read once here and never overwritten by
+  // the token branch below.
+  const keywordValue = params.get('keyword');
 
   const token = params.get('v');
   if (token) {
@@ -733,11 +816,12 @@ async function adoptUrlParams() {
     if (added) saveWatchlist(watchlist);
   }
 
-  if (!Number.isNaN(daysParam) || categoriesParam.length > 0) {
+  if (!Number.isNaN(daysParam) || categoriesParam.length > 0 || keywordValue != null) {
     const settings = loadSettings();
     saveSettings({
       days: Number.isNaN(daysParam) ? settings.days : daysParam,
       categories: categoriesParam.length ? categoriesParam : settings.categories,
+      keyword: keywordValue != null ? keywordValue.trim() : settings.keyword,
       autoRefreshMinutes: settings.autoRefreshMinutes,
     });
   }
@@ -763,6 +847,7 @@ async function loadReports() {
   debugEl.textContent = '';
   lastReports = [];
   lastNewKeys = new Set();
+  document.getElementById('mark-seen').hidden = true;
 
   if (watchlist.length === 0) {
     statusEl.textContent = 'No companies in your watchlist yet - use Add companies to get started.';
@@ -780,11 +865,11 @@ async function loadReports() {
 
   try {
     const leis = activeWatchlist.map((c) => c.lei).join(',');
-    const query = await viewQueryString({
+    const query = withKeyword(await viewQueryString({
       leis,
       days: String(settings.days),
       categories: settings.categories.join(','),
-    });
+    }), settings.keyword);
     feedLink.href = `/api/feed?${query}`;
     syncUrlWithState(query);
 
@@ -811,16 +896,24 @@ async function loadReports() {
 
     // Leads with the one number that matters (how many reports), a
     // same-line "N new" callout when there's something to see, and pushes
-    // everything else (scan scope, cache, refresh time) down into a
-    // smaller detail line - a KPI-first layout instead of one dense
-    // run-on sentence that buries the headline count in prose.
+    // everything else (scan scope, cache) down into a smaller detail line -
+    // a KPI-first layout instead of one dense run-on sentence that buries
+    // the headline count in prose. "Last updated" itself lives with the
+    // Refresh button in the header instead, not here.
     const cachedCount = (data.cachedLeis || []).length;
     const refreshedAt = new Date().toLocaleTimeString();
     const newCount = !isBaseline ? newReports.length : 0;
+    const keywordNote = data.keyword ? ` or mentioning "${escapeHtml(data.keyword)}"` : '';
     statusEl.innerHTML = `
       <span class="stat-figure">${data.count}</span> report${data.count === 1 ? '' : 's'}${newCount ? ` <span class="stat-new">${newCount} new</span>` : ''}
-      <span class="stat-meta">last ${data.days} day${data.days === 1 ? '' : 's'} · ${activeWatchlist.length} compan${activeWatchlist.length === 1 ? 'y' : 'ies'} · ${data.scanned} scanned · matching ${escapeHtml(data.categories.join(', '))} · updated ${refreshedAt}${cachedCount ? ` (${cachedCount} cached)` : ''}</span>
+      <span class="stat-meta">last ${data.days} day${data.days === 1 ? '' : 's'} · ${activeWatchlist.length} compan${activeWatchlist.length === 1 ? 'y' : 'ies'} · ${data.scanned} scanned · matching ${escapeHtml(data.categories.join(', '))}${keywordNote}</span>
     `;
+
+    const lastUpdatedEl = document.getElementById('last-updated');
+    lastUpdatedEl.textContent = `Updated ${refreshedAt}`;
+    lastUpdatedEl.title = cachedCount ? `${cachedCount} of ${activeWatchlist.length} compan${activeWatchlist.length === 1 ? 'y' : 'ies'} from cache` : '';
+
+    document.getElementById('mark-seen').hidden = lastNewKeys.size === 0;
 
     renderReportsList();
 
@@ -842,6 +935,57 @@ async function loadReports() {
   }
 }
 
+// A small inline bar chart (no charting library - plain SVG, matching the
+// rest of the app) showing filing counts per month over the last year, so
+// a burst of activity or a company having gone quiet is visible at a
+// glance instead of only readable by scrolling the raw list below.
+function renderHistoryActivity(items) {
+  const containerEl = document.getElementById('history-activity');
+  if (items.length === 0) {
+    containerEl.hidden = true;
+    containerEl.innerHTML = '';
+    return;
+  }
+
+  const now = new Date();
+  const months = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push({ key: `${d.getFullYear()}-${d.getMonth()}`, label: d.toLocaleDateString(undefined, { month: 'short' }), count: 0 });
+  }
+  const byKey = new Map(months.map((m) => [m.key, m]));
+
+  for (const item of items) {
+    const d = item.publishedAt ? new Date(item.publishedAt) : null;
+    if (!d || Number.isNaN(d.getTime())) continue;
+    const bucket = byKey.get(`${d.getFullYear()}-${d.getMonth()}`);
+    if (bucket) bucket.count++;
+  }
+
+  const maxCount = Math.max(1, ...months.map((m) => m.count));
+  const barWidth = 18;
+  const gap = 6;
+  const chartHeight = 36;
+  const width = months.length * (barWidth + gap) - gap;
+
+  const bars = months.map((m, i) => {
+    const height = m.count > 0 ? Math.max(2, Math.round((m.count / maxCount) * chartHeight)) : 0;
+    const x = i * (barWidth + gap);
+    return `<rect x="${x}" y="${chartHeight - height}" width="${barWidth}" height="${height}" rx="2" fill="${m.count > 0 ? 'var(--accent)' : 'var(--border)'}"><title>${escapeHtml(m.label)}: ${m.count} filing${m.count === 1 ? '' : 's'}</title></rect>`;
+  }).join('');
+
+  const labels = months.map((m, i) => {
+    const x = i * (barWidth + gap) + barWidth / 2;
+    return `<text x="${x}" y="${chartHeight + 11}" font-size="8" fill="var(--muted)" text-anchor="middle">${escapeHtml(m.label[0])}</text>`;
+  }).join('');
+
+  containerEl.innerHTML = `
+    <p class="hint history-activity-label">Filing activity, last 12 months</p>
+    <svg viewBox="0 0 ${width} ${chartHeight + 14}" width="100%" height="56" role="img" aria-label="Filings per month over the last 12 months">${bars}${labels}</svg>
+  `;
+  containerEl.hidden = false;
+}
+
 function renderHistoryItems(items, statusSuffix) {
   const listEl = document.getElementById('history-list');
   const statusEl = document.getElementById('history-status');
@@ -849,6 +993,8 @@ function renderHistoryItems(items, statusSuffix) {
   statusEl.textContent = (items.length
     ? `${items.length} filing(s) in the last 365 days.`
     : 'No filings found in the last 365 days.') + statusSuffix;
+
+  renderHistoryActivity(items);
 
   listEl.innerHTML = '';
   for (const item of items) {
@@ -890,6 +1036,7 @@ async function openHistoryOverlay(lei, displayName, { force = false } = {}) {
   }
 
   listEl.innerHTML = '';
+  document.getElementById('history-activity').hidden = true;
   statusEl.textContent = 'Loading…';
 
   try {
@@ -972,7 +1119,19 @@ document.getElementById('edit-company-close').addEventListener('click', () => {
   document.getElementById('edit-company-overlay').hidden = true;
 });
 
+document.getElementById('edit-company-filter').addEventListener('input', renderEditCompanyList);
+
 document.getElementById('refresh').addEventListener('click', loadReports);
+
+// Clears the "New" badges/highlight for whatever's currently on screen
+// without waiting for the next load - lastReports is already marked seen
+// in localStorage as of the load that produced it (see loadReports()), so
+// this only needs to reset the in-memory set that drives this render.
+document.getElementById('mark-seen').addEventListener('click', () => {
+  lastNewKeys = new Set();
+  document.getElementById('mark-seen').hidden = true;
+  renderReportsList();
+});
 document.getElementById('export-csv').addEventListener('click', exportCsv);
 
 document.getElementById('watchlist-export').addEventListener('click', exportWatchlist);
@@ -1003,11 +1162,11 @@ function setupAutoRefresh(settings) {
 function initSettingsForm() {
   const daysSelect = document.getElementById('days-select');
   const categoriesOtherInput = document.getElementById('categories-other-input');
-  const autoRefreshSelect = document.getElementById('auto-refresh-select');
+  const keywordInput = document.getElementById('keyword-input');
   const settings = loadSettings();
 
   daysSelect.value = String(settings.days);
-  autoRefreshSelect.value = String(settings.autoRefreshMinutes);
+  keywordInput.value = settings.keyword;
 
   const knownLower = new Set(KNOWN_CATEGORIES.map((c) => c.toLowerCase()));
   for (const value of KNOWN_CATEGORIES) {
@@ -1025,19 +1184,16 @@ function initSettingsForm() {
 
   document.getElementById('settings-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    const autoRefreshMinutes = parseInt(autoRefreshSelect.value, 10) || 0;
-
-    if (autoRefreshMinutes > 0 && typeof Notification !== 'undefined' && Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
-
+    // Auto-refresh lives in its own header control now (initAutoRefreshControl)
+    // and applies itself immediately on change - carry its current value
+    // through unchanged rather than this form having any say over it.
     const newSettings = {
       days: parseInt(daysSelect.value, 10),
       categories: gatherCategories(),
-      autoRefreshMinutes,
+      keyword: keywordInput.value.trim(),
+      autoRefreshMinutes: loadSettings().autoRefreshMinutes,
     };
     saveSettings(newSettings);
-    setupAutoRefresh(newSettings);
     loadReports();
   });
 
@@ -1048,8 +1204,27 @@ function initSettingsForm() {
     }
     categoriesOtherInput.value = '';
   });
+}
 
+// Small icon dropdown in the header (top-right) instead of a labelled
+// field inside Search settings - applies immediately on change instead of
+// waiting for that form's Apply button, matching Theme/Diagnostics right
+// next to it.
+function initAutoRefreshControl() {
+  const select = document.getElementById('auto-refresh-select');
+  const settings = loadSettings();
+  select.value = String(settings.autoRefreshMinutes);
   setupAutoRefresh(settings);
+
+  select.addEventListener('change', () => {
+    const autoRefreshMinutes = parseInt(select.value, 10) || 0;
+    if (autoRefreshMinutes > 0 && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+    const newSettings = { ...loadSettings(), autoRefreshMinutes };
+    saveSettings(newSettings);
+    setupAutoRefresh(newSettings);
+  });
 }
 
 function initReportControls() {
@@ -1061,11 +1236,31 @@ function initReportControls() {
 // server-side subscriptions - one row per email address, each with its own
 // send frequency and its own per-trust/per-report-type selection - stored
 // in Postgres and sent by a scheduler in server.js even with no browser tab
-// open. Fixed to the same six categories as Search settings' checkboxes,
-// since the matrix needs a fixed set of columns to render.
+// open. Fixed to the same six categories as Search settings' checkboxes.
 const NOTIFICATION_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report', 'Net Asset Value(s)', 'Dividend Declaration', 'Portfolio Update', 'Miscellaneous'];
+const NOTIFICATION_CATEGORY_LABELS = {
+  'Half-year Financial Report': 'Half-year',
+  'Annual Financial Report': 'Annual',
+  'Net Asset Value(s)': 'NAV',
+  'Dividend Declaration': 'Dividend',
+  'Portfolio Update': 'Portfolio',
+  'Miscellaneous': 'Misc',
+};
+// [minutes, label] - generates each email row's own frequency <select>
+// (previously one shared dropdown above the list, now per-row).
+const NOTIFICATION_FREQUENCIES = [
+  [0, 'Paused'],
+  [60, 'Every hour'],
+  [360, 'Every 6 hours'],
+  [1440, 'Daily'],
+  [10080, 'Weekly'],
+];
 
 let notificationsState = { enabled: false, subscriptions: [], selectedId: null };
+// Which trusts currently have their per-category detail expanded - a
+// session-only UI preference (not saved to the subscription), reset by
+// nothing but the user collapsing them again.
+let notificationsExpandedLeis = new Set();
 
 function currentSubscription() {
   return notificationsState.subscriptions.find((s) => s.id === notificationsState.selectedId) || null;
@@ -1089,11 +1284,12 @@ async function loadSubscriptions() {
   }
 }
 
-// Sets or clears every category at once for one trust (the "All types"
-// column) or one category across every trust (the checkbox built into each
-// column header) - both just call the same per-cell logic in a loop, then
-// re-render so every checkbox's checked/indeterminate state stays correct
-// (a bulk change can flip several cells, not just the one clicked).
+// Sets or clears every category at once for one trust (its row's own
+// checkbox) or one category across every trust (a bulk-apply chip above
+// the list) - both just call the same per-cell logic in a loop, then
+// re-render so every checkbox's checked/indeterminate state and every
+// chip's active state stay correct (a bulk change can flip several trusts,
+// not just the one clicked).
 function setAllCategoriesForTrust(lei, checked) {
   const subscription = currentSubscription();
   if (!subscription) return;
@@ -1124,71 +1320,182 @@ function setCategoryForAllTrusts(category, checked) {
   renderNotificationsMatrix(subscription);
 }
 
-// The column-header "select this type for every trust" checkboxes live in
-// the static <thead> (never re-created), so their checked/indeterminate
-// state is refreshed here on every matrix render instead of re-wiring
-// listeners each time - those are attached once, further down.
-function updateNotificationsColumnToggles(subscription, watchlist) {
-  document.querySelectorAll('.notifications-col-all').forEach((checkbox) => {
+// The bulk-apply chips above the list are static (never re-created), so
+// their active/disabled state is refreshed here on every render instead of
+// re-wiring listeners each time - those are attached once, further down.
+// A chip reads "active" only when every trust already has that category -
+// there's no third visual state for "some but not all" (unlike the row/
+// list checkboxes below, which do show indeterminate) since a chip's own
+// click always means "make this true everywhere", not "toggle this cell".
+function updateNotificationsBulkChips(subscription, watchlist) {
+  document.querySelectorAll('.notifications-bulk-chip').forEach((chip) => {
     if (watchlist.length === 0) {
-      checkbox.checked = false;
-      checkbox.indeterminate = false;
-      checkbox.disabled = true;
+      chip.classList.remove('is-active');
+      chip.disabled = true;
       return;
     }
-    checkbox.disabled = false;
+    chip.disabled = false;
     const selectedCount = watchlist.filter((c) => {
       const categories = (subscription.prefs[c.lei] && subscription.prefs[c.lei].categories) || [];
-      return categories.includes(checkbox.dataset.category);
+      return categories.includes(chip.dataset.category);
     }).length;
-    checkbox.checked = selectedCount === watchlist.length;
-    checkbox.indeterminate = selectedCount > 0 && selectedCount < watchlist.length;
+    chip.classList.toggle('is-active', selectedCount === watchlist.length);
   });
 }
 
+// One collapsed line per trust by default - just its name, an "all types"
+// checkbox, and a count of how many report types it's watching - instead
+// of always showing all six category checkboxes for all 20+ trusts at
+// once. Expanding a row (notificationsExpandedLeis) reveals its individual
+// category checkboxes for fine-grained selection.
 function renderNotificationsMatrix(subscription) {
-  const bodyEl = document.getElementById('notifications-matrix-body');
+  const listEl = document.getElementById('notifications-matrix-body');
   const watchlist = loadWatchlist();
 
-  bodyEl.innerHTML = '';
+  listEl.innerHTML = '';
   if (watchlist.length === 0) {
-    bodyEl.innerHTML = '<tr><td colspan="8" class="empty">Add companies to your watchlist first.</td></tr>';
-    updateNotificationsColumnToggles(subscription, watchlist);
+    listEl.innerHTML = '<li class="empty">Add companies to your watchlist first.</li>';
+    updateNotificationsBulkChips(subscription, watchlist);
     return;
   }
 
   for (const company of watchlist) {
+    const name = company.name || company.lei;
     const selected = (subscription.prefs[company.lei] && subscription.prefs[company.lei].categories) || [];
     const allSelected = selected.length === NOTIFICATION_CATEGORIES.length;
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td class="col-company">${escapeHtml(company.name || company.lei)}</td>
-      <td class="notifications-checkbox-cell">
-        <input type="checkbox" class="notifications-row-all" data-lei="${escapeHtml(company.lei)}" ${allSelected ? 'checked' : ''} aria-label="All report types for ${escapeHtml(company.name || company.lei)}" title="Toggle every report type for this trust" />
-      </td>
-      ${NOTIFICATION_CATEGORIES.map((category) => `
-        <td class="notifications-checkbox-cell">
-          <input type="checkbox" class="notifications-pref" data-lei="${escapeHtml(company.lei)}" data-category="${escapeHtml(category)}" ${selected.includes(category) ? 'checked' : ''} aria-label="${escapeHtml(category)} for ${escapeHtml(company.name || company.lei)}" />
-        </td>
-      `).join('')}
+    const expanded = notificationsExpandedLeis.has(company.lei);
+
+    let countLabel = '';
+    if (allSelected) countLabel = 'All types';
+    else if (selected.length > 0) countLabel = `${selected.length} of ${NOTIFICATION_CATEGORIES.length} types`;
+
+    const li = document.createElement('li');
+    li.className = 'notifications-trust-row';
+    li.innerHTML = `
+      <div class="notifications-trust-summary">
+        <button type="button" class="notifications-trust-expand" aria-expanded="${expanded}" aria-label="${expanded ? 'Collapse' : 'Expand'} report types for ${escapeHtml(name)}">${expanded ? '⌄' : '›'}</button>
+        <input type="checkbox" class="notifications-row-all" data-lei="${escapeHtml(company.lei)}" ${allSelected ? 'checked' : ''} aria-label="All report types for ${escapeHtml(name)}" title="Notify for every report type" />
+        <span class="notifications-trust-name">${escapeHtml(name)}</span>
+        <span class="notifications-trust-count">${countLabel}</span>
+      </div>
+      <div class="notifications-trust-detail"${expanded ? '' : ' hidden'}>
+        ${NOTIFICATION_CATEGORIES.map((category) => `
+          <label class="notifications-detail-item">
+            <input type="checkbox" class="notifications-pref" data-lei="${escapeHtml(company.lei)}" data-category="${escapeHtml(category)}" ${selected.includes(category) ? 'checked' : ''} />
+            ${escapeHtml(NOTIFICATION_CATEGORY_LABELS[category])}
+          </label>
+        `).join('')}
+      </div>
     `;
-    bodyEl.appendChild(tr);
-    tr.querySelector('.notifications-row-all').indeterminate = selected.length > 0 && !allSelected;
+    listEl.appendChild(li);
+    li.querySelector('.notifications-row-all').indeterminate = selected.length > 0 && !allSelected;
   }
 
-  bodyEl.querySelectorAll('.notifications-pref').forEach((checkbox) => {
+  listEl.querySelectorAll('.notifications-pref').forEach((checkbox) => {
     checkbox.addEventListener('change', () => {
       toggleNotificationPref(checkbox.dataset.lei, checkbox.dataset.category, checkbox.checked);
     });
   });
 
-  bodyEl.querySelectorAll('.notifications-row-all').forEach((checkbox) => {
+  listEl.querySelectorAll('.notifications-row-all').forEach((checkbox) => {
     checkbox.addEventListener('change', () => {
       setAllCategoriesForTrust(checkbox.dataset.lei, checkbox.checked);
     });
   });
 
-  updateNotificationsColumnToggles(subscription, watchlist);
+  listEl.querySelectorAll('.notifications-trust-expand').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const lei = btn.closest('.notifications-trust-row').querySelector('.notifications-row-all').dataset.lei;
+      if (notificationsExpandedLeis.has(lei)) notificationsExpandedLeis.delete(lei);
+      else notificationsExpandedLeis.add(lei);
+      renderNotificationsMatrix(subscription);
+    });
+  });
+
+  updateNotificationsBulkChips(subscription, watchlist);
+}
+
+// One row per subscribed email - address, its own frequency select, and a
+// remove button - instead of a dropdown that only shows one at a time plus
+// a separate always-visible "type a new one" row. Clicking a row (anywhere
+// but its own select/button) selects it as the one being configured below.
+function renderNotificationsEmailList() {
+  const listEl = document.getElementById('notifications-email-list');
+  listEl.innerHTML = '';
+
+  if (notificationsState.subscriptions.length === 0) {
+    listEl.innerHTML = '<li class="hint notifications-email-empty">No emails yet - add one above.</li>';
+    return;
+  }
+
+  for (const subscription of notificationsState.subscriptions) {
+    const li = document.createElement('li');
+    li.className = subscription.id === notificationsState.selectedId
+      ? 'notifications-email-row is-selected'
+      : 'notifications-email-row';
+    li.innerHTML = `
+      <span class="notifications-email-address">${escapeHtml(subscription.email)}</span>
+      <select class="notifications-email-frequency">
+        ${NOTIFICATION_FREQUENCIES.map(([minutes, label]) => `<option value="${minutes}" ${minutes === (subscription.frequencyMinutes || 0) ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+      </select>
+      <button type="button" class="notifications-send-now" title="Send this digest now, using whatever's new since its last send">Send now</button>
+      <button type="button" class="remove-company" aria-label="Remove ${escapeHtml(subscription.email)}" title="Remove this email">&times;</button>
+    `;
+
+    li.addEventListener('click', (e) => {
+      if (e.target.closest('select, button')) return;
+      notificationsState.selectedId = subscription.id;
+      renderNotificationsOverlay();
+    });
+
+    li.querySelector('.notifications-email-frequency').addEventListener('change', (e) => {
+      subscription.frequencyMinutes = parseInt(e.target.value, 10) || 0;
+      saveCurrentSubscription();
+    });
+    li.querySelector('.notifications-email-frequency').addEventListener('click', (e) => e.stopPropagation());
+
+    li.querySelector('.notifications-send-now').addEventListener('click', () => sendSubscriptionNow(subscription));
+    li.querySelector('.remove-company').addEventListener('click', () => removeSubscription(subscription.id));
+
+    listEl.appendChild(li);
+  }
+}
+
+// Triggers a real send right now (same sendDigestForSubscription()+markSent()
+// the scheduler itself runs, via POST /api/subscriptions/:id/send-now) -
+// not a fake preview, so this is how someone setting up a digest confirms
+// it actually delivers without waiting for its frequency to come due.
+async function sendSubscriptionNow(subscription) {
+  showNotificationsStatus(`Sending to ${subscription.email}…`);
+  try {
+    const res = await fetch(`/api/subscriptions/${encodeURIComponent(subscription.id)}/send-now`, { method: 'POST' });
+    const { ok, status, data } = await parseJsonResponse(res);
+    if (!ok) throw new Error(data.error || `Couldn't send (${status})`);
+
+    subscription.lastSentAt = data.lastSentAt;
+    showNotificationsStatus(data.sent
+      ? `Sent to ${subscription.email}: ${data.count} report${data.count === 1 ? '' : 's'}.`
+      : `Nothing new to send to ${subscription.email} right now.`);
+  } catch (err) {
+    showNotificationsStatus(`Failed to send: ${err.message || err}`);
+  }
+}
+
+async function removeSubscription(id) {
+  try {
+    const res = await fetch(`/api/subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const { ok, status, data } = await parseJsonResponse(res);
+    if (!ok) throw new Error(data.error || `Couldn't remove (${status})`);
+
+    notificationsState.subscriptions = notificationsState.subscriptions.filter((s) => s.id !== id);
+    if (notificationsState.selectedId === id) {
+      notificationsState.selectedId = notificationsState.subscriptions[0] ? notificationsState.subscriptions[0].id : null;
+    }
+    showNotificationsStatus('');
+    renderNotificationsOverlay();
+  } catch (err) {
+    showNotificationsStatus(`Failed to remove: ${err.message || err}`);
+  }
 }
 
 function renderNotificationsOverlay() {
@@ -1198,33 +1505,24 @@ function renderNotificationsOverlay() {
   bodyEl.hidden = !notificationsState.enabled;
   if (!notificationsState.enabled) return;
 
-  const selectEl = document.getElementById('notifications-email-select');
-  const removeBtn = document.getElementById('notifications-email-remove');
-  const freqSelect = document.getElementById('notifications-frequency');
-  const matrixBody = document.getElementById('notifications-matrix-body');
+  renderNotificationsEmailList();
 
-  selectEl.innerHTML = notificationsState.subscriptions
-    .map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.email)}</option>`)
-    .join('');
+  const editingLabel = document.getElementById('notifications-editing-label');
+  const matrixBody = document.getElementById('notifications-matrix-body');
 
   const subscription = currentSubscription();
   if (!subscription) {
-    selectEl.innerHTML = '<option value="">No emails yet</option>';
-    removeBtn.disabled = true;
-    freqSelect.disabled = true;
-    matrixBody.innerHTML = '<tr><td colspan="8" class="empty">Add an email above to configure its notifications.</td></tr>';
-    document.querySelectorAll('.notifications-col-all').forEach((checkbox) => {
-      checkbox.checked = false;
-      checkbox.indeterminate = false;
-      checkbox.disabled = true;
+    editingLabel.hidden = true;
+    matrixBody.innerHTML = '<li class="empty">Add an email above to configure its notifications.</li>';
+    document.querySelectorAll('.notifications-bulk-chip').forEach((chip) => {
+      chip.classList.remove('is-active');
+      chip.disabled = true;
     });
     return;
   }
 
-  selectEl.value = subscription.id;
-  removeBtn.disabled = false;
-  freqSelect.disabled = false;
-  freqSelect.value = String(subscription.frequencyMinutes || 0);
+  editingLabel.hidden = false;
+  editingLabel.textContent = `Configuring notifications for ${subscription.email}`;
   renderNotificationsMatrix(subscription);
 }
 
@@ -1281,24 +1579,14 @@ document.getElementById('notifications-close').addEventListener('click', () => {
   document.getElementById('notifications-overlay').hidden = true;
 });
 
-document.getElementById('notifications-email-select').addEventListener('change', (e) => {
-  notificationsState.selectedId = e.target.value || null;
-  renderNotificationsOverlay();
-});
-
-document.getElementById('notifications-frequency').addEventListener('change', (e) => {
-  const subscription = currentSubscription();
-  if (!subscription) return;
-  subscription.frequencyMinutes = parseInt(e.target.value, 10) || 0;
-  saveCurrentSubscription();
-});
-
-// The column-header "select this type for every trust" checkboxes are
-// static (part of the <thead>, never rebuilt), so their listeners are
-// wired once here rather than in renderNotificationsMatrix().
-document.querySelectorAll('.notifications-col-all').forEach((checkbox) => {
-  checkbox.addEventListener('change', () => {
-    setCategoryForAllTrusts(checkbox.dataset.category, checkbox.checked);
+// The bulk-apply chips are static (outside the re-rendered list), so their
+// listeners are wired once here rather than in renderNotificationsMatrix().
+// Mirrors clicking a native indeterminate/unchecked checkbox: not every
+// trust has it yet -> select it for all of them; already active -> clear
+// it from all of them.
+document.querySelectorAll('.notifications-bulk-chip').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    setCategoryForAllTrusts(chip.dataset.category, !chip.classList.contains('is-active'));
   });
 });
 
@@ -1329,31 +1617,15 @@ document.getElementById('notifications-email-add').addEventListener('click', asy
   }
 });
 
-document.getElementById('notifications-email-remove').addEventListener('click', async () => {
-  const subscription = currentSubscription();
-  if (!subscription) return;
-
-  try {
-    const res = await fetch(`/api/subscriptions/${encodeURIComponent(subscription.id)}`, { method: 'DELETE' });
-    const { ok, status, data } = await parseJsonResponse(res);
-    if (!ok) throw new Error(data.error || `Couldn't remove (${status})`);
-
-    notificationsState.subscriptions = notificationsState.subscriptions.filter((s) => s.id !== subscription.id);
-    notificationsState.selectedId = notificationsState.subscriptions[0] ? notificationsState.subscriptions[0].id : null;
-    showNotificationsStatus('');
-    renderNotificationsOverlay();
-  } catch (err) {
-    showNotificationsStatus(`Failed to remove: ${err.message || err}`);
-  }
-});
-
 (async () => {
   initTheme();
   initWatchlistCollapse();
   initSettingsCollapse();
+  initSidebarResize();
   await adoptUrlParams();
   await initWatchlist();
   initSettingsForm();
+  initAutoRefreshControl();
   initReportControls();
   await loadReports();
   if (urlViewError) {

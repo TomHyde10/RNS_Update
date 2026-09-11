@@ -111,6 +111,13 @@ header h1 { margin: 0; font-size: 1.25rem; font-weight: 700; letter-spacing: -0.
   gap: 1rem;
   flex-wrap: wrap;
   flex: 0 0 auto;
+  /* Without this, a flex item that wraps onto its own line (via
+     .header-top's own flex-wrap) still sizes to its full natural content
+     width regardless of viewport - so on a narrow screen this row's own
+     `flex-wrap: wrap` above never had a reason to trigger for its
+     children, and the whole cluster ran off the right edge instead of
+     wrapping internally once there were enough items to no longer fit. */
+  max-width: 100%;
 }
 
 .diagnostics-button {
@@ -122,6 +129,8 @@ header h1 { margin: 0; font-size: 1.25rem; font-weight: 700; letter-spacing: -0.
 }
 
 .diagnostics-button:hover { color: var(--fg); }
+
+.header-last-updated { font-size: 0.8rem; color: var(--muted); }
 
 .theme-toggle {
   display: flex;
@@ -160,10 +169,13 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
 /* Two-column layout: sidebar (companies + settings) beside the reports
    list, instead of everything stacked in one narrow column. Collapses to a
    single column below the tablet breakpoint. */
+/* Sidebar width is user-adjustable (see the drag handle below) and
+   persisted per-browser - --sidebar-width is set inline by app.js, with a
+   plain fallback here so the layout is still correct before that runs. */
 .layout {
   display: grid;
-  grid-template-columns: minmax(240px, 300px) 1fr;
-  gap: 2rem;
+  grid-template-columns: var(--sidebar-width, 280px) 6px 1fr;
+  gap: 1rem;
   align-items: start;
   flex: 1 1 auto;
   min-height: 0;
@@ -176,7 +188,35 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   height: 100%;
   overflow-y: auto;
   padding-right: 0.25rem;
+  min-width: 0;
 }
+
+/* Drag handle between the sidebar and the reports table - a thin visible
+   line with a wider invisible hit area either side of it, since a
+   1px-wide click/drag target is unusably fiddly. */
+.sidebar-resizer {
+  align-self: stretch;
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+}
+.sidebar-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--border);
+  transform: translateX(-50%);
+}
+.sidebar-resizer:hover::after,
+.sidebar-resizer.is-dragging::after,
+.sidebar-resizer:focus-visible::after {
+  background: var(--accent);
+  width: 2px;
+}
+.sidebar-resizer:focus-visible { outline: none; }
 
 /* Grid items default to min-width:auto (content-based), so a wide
    descendant (the reports table below its 640px breakpoint) would
@@ -196,6 +236,7 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   body { height: auto; overflow: visible; }
   .layout { grid-template-columns: 1fr; height: auto; }
   .sidebar { height: auto; overflow-y: visible; }
+  .sidebar-resizer { display: none; }
   .main-content { height: auto; }
 }
 
@@ -305,6 +346,19 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
    editable name field (renaming wasn't possible before at all), the LEI
    for reference, then the history/remove actions that used to sit on the
    sidebar tag itself. */
+#edit-company-filter {
+  font: inherit;
+  width: 100%;
+  padding: 0.35rem 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  color: var(--fg);
+  margin-top: 0.5rem;
+}
+#edit-company-filter:focus { border-bottom-color: var(--accent); outline: none; }
+
 .edit-company-list {
   list-style: none;
   padding: 0;
@@ -733,6 +787,10 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
 }
 .overlay-close:hover { background: var(--hover-bg); color: var(--fg); }
 
+.history-activity { margin: 0.5rem 0; flex: 0 0 auto; }
+.history-activity-label { margin: 0 0 0.25rem; }
+.history-activity svg { display: block; }
+
 .history-list {
   list-style: none;
   padding: 0;
@@ -765,32 +823,6 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   overflow-y: auto;
 }
 
-.notifications-toolbar {
-  display: flex;
-  align-items: flex-end;
-  gap: 1rem;
-  flex-wrap: wrap;
-  margin-top: 0.75rem;
-}
-
-.notifications-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  font-size: 0.85rem;
-  color: var(--muted);
-}
-
-.notifications-field select {
-  font: inherit;
-  padding: 0.35rem 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: none;
-  color: var(--fg);
-  min-width: 12rem;
-}
-
 .notifications-add-row {
   display: flex;
   gap: 0.5rem;
@@ -809,6 +841,50 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
 }
 .notifications-add-row input:focus { border-color: var(--accent); outline: none; }
 
+/* One row per subscribed email - address, its own frequency, remove - in
+   the same divided-list style as the Edit companies overlay's list
+   (.edit-company-row), instead of a dropdown that only shows one address
+   at a time. Click a row to select it as the one being configured below;
+   its select/remove button stop that click from also selecting it. */
+.notifications-email-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+  max-height: 9rem;
+  overflow-y: auto;
+}
+
+.notifications-email-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.notifications-email-row:last-child { border-bottom: none; }
+.notifications-email-row:hover { background: var(--hover-bg); }
+.notifications-email-row.is-selected { box-shadow: inset 3px 0 0 var(--accent); background: var(--hover-bg); }
+
+.notifications-email-address { flex: 1 1 auto; min-width: 0; font-size: 0.85rem; overflow-wrap: anywhere; }
+
+.notifications-email-frequency {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--fg);
+  flex: 0 0 auto;
+}
+
+.notifications-email-empty { padding: 0.5rem; }
+
+.notifications-send-now { font-size: 0.78rem; padding: 0.25rem 0.5rem; flex: 0 0 auto; }
+
 /* Sits between .overlay-card-xl (a flex column) and .notifications-matrix-wrap
    (flex: 1 1 auto; min-height: 0, expecting to shrink and scroll within the
    card's 85vh cap) - without being a flex column itself, that sizing has no
@@ -826,6 +902,32 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
    what a given email is actually notified about. Scrolls both ways: tall
    with a large watchlist, and (on narrow viewports) wide with six category
    columns. */
+/* The power-user "select this type for every trust" action, now that
+   there's no column grid to hold a header checkbox per category - six
+   small toggle chips instead, each active (filled) only when literally
+   every trust already has that type checked. */
+.notifications-bulk-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+
+.notifications-bulk-label { font-size: 0.78rem; color: var(--muted); margin-right: 0.2rem; }
+
+.notifications-bulk-chip {
+  font-size: 0.78rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+}
+.notifications-bulk-chip.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+
 .notifications-matrix-wrap {
   margin-top: 0.75rem;
   overflow: auto;
@@ -834,64 +936,60 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg);
-  /* Own stacking/compositing context - a scrolling container with a sticky
-     child inside a translucent-backdrop overlay can otherwise get its own
-     GPU layer during scroll, and any cell without an explicit background
-     (table cells are transparent by default) then lets whatever's on the
-     page *behind* the overlay show through in that layer instead of this
-     opaque card - seen as a stray band of the reports table's own text/
-     colors cutting into a matrix row. Isolating the context plus giving
-     every cell its own background (below) closes both ends of that gap. */
-  isolation: isolate;
 }
 
-.notifications-matrix {
-  width: 100%;
-  border-collapse: collapse;
-  min-width: 740px;
-  background: var(--bg);
-}
+.notifications-trust-list { list-style: none; padding: 0; margin: 0; }
 
-.notifications-matrix th {
-  position: sticky;
-  top: 0;
-  background: var(--bg);
-  text-align: left;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  padding: 0.6rem 0.5rem;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-.notifications-matrix th:first-child { text-align: left; padding-left: 0.75rem; }
-.notifications-matrix th:not(:first-child) { text-align: center; }
+/* Collapsed by default: name, the "all types" checkbox, and a plain-text
+   count - one line per trust instead of a full row of six checkboxes, so
+   a 20+ company watchlist reads as a short list, not a dense grid. */
+.notifications-trust-row { border-bottom: 1px solid var(--border); }
+.notifications-trust-row:last-child { border-bottom: none; }
 
-/* Each category column header doubles as a "select this type for every
-   trust" toggle - the checkbox sits right under its own column label
-   rather than needing a second header row. */
-.notifications-col-toggle {
+.notifications-trust-summary {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+}
+.notifications-trust-row:hover .notifications-trust-summary { background: var(--hover-bg); }
+
+.notifications-trust-expand {
+  border: none;
+  background: none;
+  padding: 0;
+  width: 1.2rem;
+  flex: 0 0 auto;
+  font-size: 0.9rem;
+  color: var(--muted);
   cursor: pointer;
 }
-.notifications-col-all { cursor: pointer; }
 
-.notifications-matrix td {
-  padding: 0.5rem;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.85rem;
-  background: var(--bg);
+.notifications-trust-name { flex: 1 1 auto; min-width: 0; font-size: 0.85rem; overflow-wrap: anywhere; }
+.notifications-trust-count { flex: 0 0 auto; font-size: 0.75rem; color: var(--muted); }
+
+/* Only shown once a trust is expanded - the individual category
+   checkboxes, indented under their trust so the relationship reads
+   clearly without needing a grid line. */
+.notifications-trust-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  padding: 0 0.75rem 0.75rem 2.5rem;
 }
-.notifications-matrix td.col-company { padding-left: 0.75rem; white-space: nowrap; }
-.notifications-matrix tbody tr:last-child td { border-bottom: none; }
-.notifications-matrix tbody tr:hover td { background: var(--hover-bg); }
+/* Same fix as .overlay[hidden] above: this class's own `display: flex` has
+   equal specificity to the UA stylesheet's `[hidden] { display: none }`,
+   and author CSS always wins that regardless of specificity or source
+   order - so every row rendered permanently expanded without this. */
+.notifications-trust-detail[hidden] { display: none; }
 
-.notifications-checkbox-cell { text-align: center; }
+.notifications-detail-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--fg);
+}
 
 /* Narrow screens: 5 columns of real content can't fit a phone width even
    with wrapping (tried it - a narrow Actions column wrapped the button
