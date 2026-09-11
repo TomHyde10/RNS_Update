@@ -437,7 +437,7 @@ function renderReportsList() {
   const sortSelect = document.getElementById('sort-select');
 
   if (lastReports.length === 0) {
-    listEl.innerHTML = '<li class="empty">No matching reports in the selected time period.</li>';
+    listEl.innerHTML = '<tr><td colspan="5" class="empty">No matching reports in the selected time period.</td></tr>';
     return;
   }
 
@@ -450,33 +450,36 @@ function renderReportsList() {
 
   listEl.innerHTML = '';
   if (visible.length === 0) {
-    listEl.innerHTML = '<li class="empty">No reports match your filter.</li>';
+    listEl.innerHTML = '<tr><td colspan="5" class="empty">No reports match your filter.</td></tr>';
     return;
   }
 
   for (const report of visible) {
     const key = reportKey(report);
     const isNew = lastNewKeys.has(key);
-    const li = document.createElement('li');
-    li.className = isNew ? 'report report-new' : 'report';
+    const tr = document.createElement('tr');
+    tr.className = isNew ? 'report-row report-row-new' : 'report-row';
     const date = report.publishedAt ? new Date(report.publishedAt).toLocaleString() : 'Unknown date';
     const titleHtml = report.url
-      ? `<a href="${escapeHtml(report.url)}" target="_blank" rel="noopener">${escapeHtml(report.title)}</a>`
+      ? `<a href="${escapeHtml(report.url)}" target="_blank" rel="noopener" class="report-title-link">${escapeHtml(report.title)}</a>`
       : escapeHtml(report.title);
 
-    li.innerHTML = `
-      <div class="report-company">${escapeHtml(report.company)}${isNew ? '<span class="new-badge">NEW</span>' : ''}</div>
-      <div class="report-title">${titleHtml}</div>
-      <div class="report-meta">${escapeHtml(report.category || '')} · ${escapeHtml(date)}</div>
-      <div class="report-actions">
-        <button type="button" class="send-notification">Send Notification</button>
-        <span class="notify-status"></span>
-      </div>
+    tr.innerHTML = `
+      <td class="col-company">${escapeHtml(report.company)}</td>
+      <td class="col-title">${titleHtml}${isNew ? '<span class="pill pill-new">New</span>' : ''}</td>
+      <td class="col-category">${escapeHtml(report.category || '')}</td>
+      <td class="col-published">${escapeHtml(date)}</td>
+      <td class="col-actions">
+        <div class="actions-inner">
+          <button type="button" class="send-notification">Send Notification</button>
+          <span class="notify-status"></span>
+        </div>
+      </td>
     `;
 
-    li.querySelector('.send-notification').addEventListener('click', async (e) => {
+    tr.querySelector('.send-notification').addEventListener('click', async (e) => {
       const btn = e.currentTarget;
-      const statusSpan = li.querySelector('.notify-status');
+      const statusSpan = tr.querySelector('.notify-status');
 
       let email = getNotifyEmail();
       if (!email) {
@@ -502,7 +505,7 @@ function renderReportsList() {
       }
     });
 
-    listEl.appendChild(li);
+    listEl.appendChild(tr);
   }
 }
 
