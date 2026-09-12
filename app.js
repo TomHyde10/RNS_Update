@@ -583,16 +583,33 @@ document.getElementById('due-dates-close').addEventListener('click', () => {
 
 // Filing calendar: a month grid superimposing recent filings and estimated
 // Half-year/Annual due dates (see lib/dueDates.js) for a user-editable
-// subset of the watchlist - independent of the main report list's own
-// day-window/category settings, and independent of a company's "enabled"
-// checkbox in Edit companies (a company can be watched here without being
-// part of the active search). Which trusts are shown persists in
-// localStorage across sessions; which month is displayed does not.
+// subset of the watchlist and report types - independent of the main
+// report list's own day-window/category settings, and independent of a
+// company's "enabled" checkbox in Edit companies (a company can be watched
+// here without being part of the active search). Which trusts/categories
+// are shown persists in localStorage across sessions; which month is
+// displayed does not.
 const CALENDAR_TRUSTS_KEY = 'rns-calendar-trusts';
+const CALENDAR_CATEGORIES_KEY = 'rns-calendar-categories';
+// Half-year/Annual have an actual filing deadline worth seeing at a
+// glance (see lib/dueDates.js); the other four are opt-in via the
+// category chips, since including them by default is exactly what made
+// the calendar unreadable - a handful of trusts filing NAV updates on
+// most weekdays buries everything else under "+N more".
+const CALENDAR_DEFAULT_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report'];
+// Half-year/Annual filings are sourced from calendarDueReportsByLei (up to
+// DUE_DATE_HISTORY_DAYS back - see server.js) instead of the 365-day
+// all-category fetch below, so they aren't artificially capped to the last
+// year just because every other category is.
+const CALENDAR_LONG_HISTORY_CATEGORIES = new Set(CALENDAR_DEFAULT_CATEGORIES);
+
 let calendarSelectedLeis = new Set();
+let calendarSelectedCategories = new Set();
 let calendarMonth = new Date();
-let calendarItemsByLei = {}; // lei -> this company's own filing history (all categories)
+let calendarItemsByLei = {}; // lei -> this company's own filing history, last 365 days, every category
+let calendarDueReportsByLei = {}; // lei -> Half-year/Annual filings, up to several years back
 let calendarDueInfoByLei = {}; // lei -> { halfYear, annual } (see lib/dueDates.js's computeDueInfo)
+let calendarNamesByLei = {}; // lei -> best-known display name (see computeCalendarNamesByLei())
 
 function loadCalendarTrusts() {
   try {
@@ -614,6 +631,24 @@ function saveCalendarTrusts() {
 function initCalendarTrusts() {
   const saved = loadCalendarTrusts();
   calendarSelectedLeis = saved || new Set(loadWatchlist().filter(isCompanyEnabled).map((c) => c.lei));
+}
+
+function loadCalendarCategories() {
+  try {
+    const raw = localStorage.getItem(CALENDAR_CATEGORIES_KEY);
+    return raw ? new Set(JSON.parse(raw)) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCalendarCategories() {
+  localStorage.setItem(CALENDAR_CATEGORIES_KEY, JSON.stringify([...calendarSelectedCategories]));
+}
+
+function initCalendarCategories() {
+  const saved = loadCalendarCategories();
+  calendarSelectedCategories = saved || new Set(CALENDAR_DEFAULT_CATEGORIES);
 }
 
 // Same cache (localStorage, keyed by LEI, see loadHistoryCache()/
@@ -650,15 +685,21 @@ async function loadCalendarData() {
 
   if (leis.length === 0) {
     calendarItemsByLei = {};
+    calendarDueReportsByLei = {};
     calendarDueInfoByLei = {};
     statusEl.hidden = false;
-    statusEl.textContent = 'No trusts selected - tick at least one on the left.';
+    statusEl.textContent = 'No trusts selected - tick at least one below.';
     return;
   }
 
   statusEl.hidden = false;
   statusEl.textContent = 'Loading…';
   try {
+    // /api/due-dates fetches Half-year/Annual over several years (see
+    // server.js's DUE_DATE_HISTORY_DAYS) and returns both the full filing
+    // list and the per-company "next due" summary in one call - the
+    // per-LEI fetch below stays at 365 days since it covers every other
+    // category too and those don't need years of backlog.
     const [itemsPerLei, dueResult] = await Promise.all([
       Promise.all(leis.map((lei) => fetchCompanyHistoryItems(lei))),
       fetch(`/api/due-dates?leis=${encodeURIComponent(leis.join(','))}`)
@@ -668,12 +709,41 @@ async function loadCalendarData() {
 
     calendarItemsByLei = {};
     leis.forEach((lei, i) => { calendarItemsByLei[lei] = itemsPerLei[i]; });
+
+    calendarDueReportsByLei = {};
+    for (const r of (dueResult.ok && dueResult.data.reports) || []) {
+      if (!calendarDueReportsByLei[r.lei]) calendarDueReportsByLei[r.lei] = [];
+      calendarDueReportsByLei[r.lei].push(r);
+    }
     calendarDueInfoByLei = (dueResult.ok && dueResult.data.dueInfo) || {};
+    calendarNamesByLei = computeCalendarNamesByLei(leis);
     statusEl.hidden = true;
   } catch (err) {
     statusEl.hidden = false;
     statusEl.textContent = `Failed to load: ${err.message || err}`;
   }
+}
+
+// A trust with no name set in the watchlist (an empty name field) would
+// otherwise show as its bare 20-character LEI everywhere in this overlay -
+// falls back to the company name NSM itself returned on any of its already-
+// fetched filings (same idea as loadReports()'s own company-name
+// resolution), and only to the LEI if truly nothing else is known yet
+// (e.g. a trust with no filings at all in the fetched window).
+function computeCalendarNamesByLei(leis) {
+  const watchlistNames = new Map(loadWatchlist().map((c) => [c.lei, (c.name || '').trim()]));
+  const names = {};
+  for (const lei of leis) {
+    const watchlistName = watchlistNames.get(lei);
+    if (watchlistName) {
+      names[lei] = watchlistName;
+      continue;
+    }
+    const fromItems = (calendarItemsByLei[lei] || []).find((i) => i.company);
+    const fromDue = (calendarDueReportsByLei[lei] || []).find((r) => r.company);
+    names[lei] = (fromItems && fromItems.company) || (fromDue && fromDue.company) || lei;
+  }
+  return names;
 }
 
 function calendarDayKey(date) {
@@ -682,11 +752,12 @@ function calendarDayKey(date) {
 
 // One entry per (trust, day) - a real filing on the day it published, or an
 // estimated due date (Half-year/Annual only) on the day it's estimated for,
-// whether that's already in the past (overdue) or still ahead. Grouped by
-// day key for O(1) lookup while building the grid below.
+// whether that's already in the past (overdue) or still ahead - filtered
+// down to calendarSelectedCategories throughout, so an unticked category
+// contributes neither its filed dots nor (for Half-year/Annual) its due
+// estimate. Grouped by day key for O(1) lookup while building the grid.
 function buildCalendarDayEvents() {
   const byDay = new Map();
-  const namesByLei = new Map(loadWatchlist().map((c) => [c.lei, c.name || c.lei]));
 
   const addEvent = (date, event) => {
     if (!date || Number.isNaN(date.getTime())) return;
@@ -696,17 +767,27 @@ function buildCalendarDayEvents() {
   };
 
   for (const lei of calendarSelectedLeis) {
-    const name = namesByLei.get(lei) || lei;
+    const name = calendarNamesByLei[lei] || lei;
 
     for (const item of calendarItemsByLei[lei] || []) {
+      if (CALENDAR_LONG_HISTORY_CATEGORIES.has(item.type)) continue;
+      if (!calendarSelectedCategories.has(item.type)) continue;
       addEvent(item.publishedAt ? new Date(item.publishedAt) : null, {
         type: 'filed', lei, name, category: item.type, url: item.url,
+      });
+    }
+
+    for (const report of calendarDueReportsByLei[lei] || []) {
+      if (!calendarSelectedCategories.has(report.category)) continue;
+      addEvent(report.publishedAt ? new Date(report.publishedAt) : null, {
+        type: 'filed', lei, name, category: report.category, url: report.url,
       });
     }
 
     const due = calendarDueInfoByLei[lei];
     if (!due) continue;
     for (const [key, label] of [['halfYear', 'Half-year Financial Report'], ['annual', 'Annual Financial Report']]) {
+      if (!calendarSelectedCategories.has(label)) continue;
       const entry = due[key];
       if (entry && entry.dueDate) {
         addEvent(new Date(entry.dueDate), { type: 'due', lei, name, category: label, status: entry.status });
@@ -768,6 +849,10 @@ function renderCalendarGrid() {
   });
 }
 
+// Toggle chips rather than the old checkbox-per-row list - a wrapped row
+// of pills reads as a compact filter strip under the grid (see
+// .calendar-trusts in style.css), matching the category chips above it,
+// instead of a second tall panel competing with the grid for space.
 function renderCalendarTrustsList() {
   const listEl = document.getElementById('calendar-trusts-list');
   const watchlist = loadWatchlist();
@@ -779,33 +864,69 @@ function renderCalendarTrustsList() {
   }
 
   for (const company of watchlist) {
+    const isActive = calendarSelectedLeis.has(company.lei);
+    const name = company.name || calendarNamesByLei[company.lei] || company.lei;
     const li = document.createElement('li');
-    li.className = 'calendar-trust-row';
-    li.innerHTML = `
-      <label>
-        <input type="checkbox" class="calendar-trust-toggle" data-lei="${escapeHtml(company.lei)}" ${calendarSelectedLeis.has(company.lei) ? 'checked' : ''} />
-        ${escapeHtml(company.name || company.lei)}
-      </label>
-    `;
+    li.innerHTML = `<button type="button" class="calendar-trust-chip${isActive ? ' is-active' : ''}" data-lei="${escapeHtml(company.lei)}">${escapeHtml(name)}</button>`;
     listEl.appendChild(li);
   }
 
-  listEl.querySelectorAll('.calendar-trust-toggle').forEach((checkbox) => {
-    checkbox.addEventListener('change', async () => {
-      if (checkbox.checked) calendarSelectedLeis.add(checkbox.dataset.lei);
-      else calendarSelectedLeis.delete(checkbox.dataset.lei);
+  listEl.querySelectorAll('.calendar-trust-chip').forEach((chip) => {
+    chip.addEventListener('click', async () => {
+      const lei = chip.dataset.lei;
+      if (calendarSelectedLeis.has(lei)) calendarSelectedLeis.delete(lei);
+      else calendarSelectedLeis.add(lei);
+      chip.classList.toggle('is-active');
       saveCalendarTrusts();
       await loadCalendarData();
+      renderCalendarTrustsList();
       renderCalendarGrid();
+      updateCalendarIcsLink();
     });
   });
+}
+
+function renderCalendarCategoryChips() {
+  document.querySelectorAll('.calendar-category-chip').forEach((chip) => {
+    chip.classList.toggle('is-active', calendarSelectedCategories.has(chip.dataset.category));
+  });
+}
+
+// Keeps "Add to Calendar" pointed at exactly the current trust/category
+// selection - reusing viewQueryString() so an encrypted `v` token is used
+// when VIEW_TOKEN_SECRET is set, same as the main report list's own RSS
+// feed link. Disabled (no href, dimmed via [aria-disabled] - see
+// style.css) rather than pointing at an empty feed when nothing is
+// selected to subscribe to.
+async function updateCalendarIcsLink() {
+  const linkEl = document.getElementById('calendar-ics-link');
+  const leis = [...calendarSelectedLeis].join(',');
+  const categories = [...calendarSelectedCategories].join(',');
+
+  if (!leis || !categories) {
+    linkEl.removeAttribute('href');
+    linkEl.setAttribute('aria-disabled', 'true');
+    return;
+  }
+
+  try {
+    const query = await viewQueryString({ leis, days: '365', categories });
+    linkEl.href = `/api/calendar.ics?${query}`;
+    linkEl.removeAttribute('aria-disabled');
+  } catch {
+    linkEl.removeAttribute('href');
+    linkEl.setAttribute('aria-disabled', 'true');
+  }
 }
 
 async function openCalendarOverlay() {
   document.getElementById('calendar-overlay').hidden = false;
   renderCalendarTrustsList();
+  renderCalendarCategoryChips();
   await loadCalendarData();
+  renderCalendarTrustsList();
   renderCalendarGrid();
+  updateCalendarIcsLink();
 }
 
 document.getElementById('calendar-button').addEventListener('click', openCalendarOverlay);
@@ -834,7 +955,9 @@ document.getElementById('calendar-trusts-all').addEventListener('click', async (
   saveCalendarTrusts();
   renderCalendarTrustsList();
   await loadCalendarData();
+  renderCalendarTrustsList();
   renderCalendarGrid();
+  updateCalendarIcsLink();
 });
 
 document.getElementById('calendar-trusts-none').addEventListener('click', async () => {
@@ -842,7 +965,26 @@ document.getElementById('calendar-trusts-none').addEventListener('click', async 
   saveCalendarTrusts();
   renderCalendarTrustsList();
   await loadCalendarData();
+  renderCalendarTrustsList();
   renderCalendarGrid();
+  updateCalendarIcsLink();
+});
+
+// Category chips are static markup (unlike the trust chips above, never
+// re-created), so their listeners are wired once here - purely a
+// client-side filter over already-loaded data, so no re-fetch needed, just
+// a grid re-render (updateCalendarIcsLink() still needs the network,
+// since the ics feed's `categories` param changes).
+document.querySelectorAll('.calendar-category-chip').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    const category = chip.dataset.category;
+    if (calendarSelectedCategories.has(category)) calendarSelectedCategories.delete(category);
+    else calendarSelectedCategories.add(category);
+    saveCalendarCategories();
+    renderCalendarCategoryChips();
+    renderCalendarGrid();
+    updateCalendarIcsLink();
+  });
 });
 
 // Reads a fetch Response as JSON, but tolerates a body that isn't valid
@@ -2346,6 +2488,7 @@ document.getElementById('notifications-email-add').addEventListener('click', asy
   // needs initWatchlist() done first - not the other way around.
   await Promise.all([initWatchlist(), initSeenBackend()]);
   initCalendarTrusts();
+  initCalendarCategories();
   await adoptUrlParams();
   initSettingsForm();
   initAutoRefreshControl();

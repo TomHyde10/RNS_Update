@@ -188,40 +188,50 @@
   </div>
 
   <div id="calendar-overlay" class="overlay" hidden>
-    <div class="overlay-card overlay-card-xl" role="dialog" aria-modal="true" aria-labelledby="calendar-heading">
+    <div class="overlay-card overlay-card-xl calendar-card" role="dialog" aria-modal="true" aria-labelledby="calendar-heading">
       <div class="overlay-header">
         <h2 id="calendar-heading">Filing calendar</h2>
         <button type="button" id="calendar-close" class="overlay-close" aria-label="Close">&times;</button>
       </div>
-      <p class="hint">Recent filings (last 365 days) and estimated Half-year/Annual due dates for the trusts ticked below. Click an entry to open that trust's full filing history.</p>
 
-      <div class="calendar-layout">
-        <div class="calendar-trusts">
-          <div class="calendar-trusts-header">
-            <span>Trusts shown</span>
-            <button type="button" id="calendar-trusts-all" class="calendar-trusts-toggle">All</button>
-            <button type="button" id="calendar-trusts-none" class="calendar-trusts-toggle">None</button>
-          </div>
-          <ul id="calendar-trusts-list" class="calendar-trusts-list"></ul>
+      <div class="calendar-main">
+        <div class="calendar-nav">
+          <button type="button" id="calendar-prev" aria-label="Previous month">&lsaquo;</button>
+          <span id="calendar-month-label" class="calendar-month-label"></span>
+          <button type="button" id="calendar-today">Today</button>
+          <button type="button" id="calendar-next" aria-label="Next month">&rsaquo;</button>
         </div>
 
-        <div class="calendar-main">
-          <div class="calendar-nav">
-            <button type="button" id="calendar-prev" aria-label="Previous month">&lsaquo;</button>
-            <span id="calendar-month-label" class="calendar-month-label"></span>
-            <button type="button" id="calendar-today">Today</button>
-            <button type="button" id="calendar-next" aria-label="Next month">&rsaquo;</button>
-          </div>
-          <div class="calendar-legend">
-            <span class="calendar-legend-item"><span class="calendar-dot calendar-dot-filed"></span> Filed</span>
-            <span class="calendar-legend-item"><span class="calendar-dot calendar-dot-due"></span> Estimated due</span>
-          </div>
-          <p id="calendar-status" class="hint" hidden></p>
-          <div class="calendar-weekdays">
-            <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
-          </div>
-          <div id="calendar-grid" class="calendar-grid"></div>
+        <div class="calendar-category-row">
+          <span class="calendar-category-label">Show</span>
+          <button type="button" class="calendar-category-chip" data-category="Half-year Financial Report">Half-year</button>
+          <button type="button" class="calendar-category-chip" data-category="Annual Financial Report">Annual</button>
+          <button type="button" class="calendar-category-chip" data-category="Net Asset Value(s)">NAV</button>
+          <button type="button" class="calendar-category-chip" data-category="Dividend Declaration">Dividend</button>
+          <button type="button" class="calendar-category-chip" data-category="Portfolio Update">Portfolio</button>
+          <button type="button" class="calendar-category-chip" data-category="Miscellaneous">Misc</button>
+          <span class="calendar-legend">
+            <span class="calendar-legend-item"><span class="calendar-dot calendar-dot-filed"></span>Filed</span>
+            <span class="calendar-legend-item"><span class="calendar-dot calendar-dot-due"></span>Estimated due</span>
+          </span>
         </div>
+
+        <p id="calendar-status" class="hint" hidden></p>
+
+        <div class="calendar-weekdays">
+          <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+        </div>
+        <div id="calendar-grid" class="calendar-grid"></div>
+      </div>
+
+      <div class="calendar-trusts">
+        <div class="calendar-trusts-header">
+          <span>Trusts shown</span>
+          <button type="button" id="calendar-trusts-all" class="calendar-trusts-toggle">All</button>
+          <button type="button" id="calendar-trusts-none" class="calendar-trusts-toggle">None</button>
+          <a id="calendar-ics-link" href="#" class="calendar-trusts-toggle" target="_blank" rel="noopener" title="Subscribe in Google/Outlook/Apple Calendar - stays in sync with the trusts and report types selected here">Add to Calendar</a>
+        </div>
+        <ul id="calendar-trusts-list" class="calendar-trusts-list"></ul>
       </div>
     </div>
   </div>

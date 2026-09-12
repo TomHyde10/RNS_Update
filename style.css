@@ -1178,67 +1178,16 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
 }
 .calendar-fab:hover { background: var(--hover-bg); }
 
-/* Side-by-side trust picker + month grid, matching .overlay-card-xl's own
-   flex-column/max-height sizing (see the comment above
-   .notifications-matrix-wrap) so the grid scrolls internally instead of
-   growing the whole card past the viewport. */
-.calendar-layout {
-  display: flex;
-  gap: 1rem;
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.calendar-trusts {
-  flex: 0 0 200px;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  border-right: 1px solid var(--border);
-  padding-right: 1rem;
-}
-
-.calendar-trusts-header {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.78rem;
-  color: var(--muted);
-  margin-bottom: 0.4rem;
-}
-.calendar-trusts-header span { flex: 1 1 auto; }
-
-.calendar-trusts-toggle {
-  font-size: 0.72rem;
-  padding: 0.15rem 0.45rem;
-  flex: 0 0 auto;
-}
-
-.calendar-trusts-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.calendar-trust-row { padding: 0.2rem 0; }
-.calendar-trust-row label {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.82rem;
-  cursor: pointer;
-  overflow-wrap: anywhere;
-}
+/* Wider than the default .overlay-card-xl (860px) - the month grid reads
+   as a cramped 7-column table at that width once the trust picker moved
+   out from beside it to below (see .calendar-trusts). */
+.calendar-card { max-width: 1080px; }
 
 .calendar-main {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  min-width: 0;
 }
 
 .calendar-nav {
@@ -1246,18 +1195,48 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   align-items: center;
   justify-content: center;
   gap: 0.75rem;
-  margin-bottom: 0.4rem;
+  margin: 0.2rem 0 0.6rem;
 }
 
 .calendar-month-label { font-weight: 600; min-width: 9rem; text-align: center; }
 
+/* Category filter chips (which report types populate the grid at all) and
+   the Filed/Estimated due legend (what a dot's own shape means) share one
+   row - two different questions about the same dots, so keeping them
+   together reads better than two separate rows competing for attention. */
+.calendar-category-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.calendar-category-label { font-size: 0.78rem; color: var(--muted); margin-right: 0.2rem; }
+
+.calendar-category-chip {
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+}
+.calendar-category-chip.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+
 .calendar-legend {
   display: flex;
-  gap: 1rem;
-  justify-content: center;
+  gap: 0.9rem;
+  margin-left: auto;
   font-size: 0.75rem;
   color: var(--muted);
-  margin-bottom: 0.5rem;
 }
 .calendar-legend-item { display: flex; align-items: center; gap: 0.3rem; }
 
@@ -1286,7 +1265,7 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
 .calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  grid-auto-rows: minmax(5.5rem, 1fr);
+  grid-auto-rows: minmax(5rem, 1fr);
   gap: 1px;
   background: var(--border);
   border: 1px solid var(--border);
@@ -1339,18 +1318,82 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
 
 .calendar-more { font-size: 0.68rem; color: var(--muted); }
 
-/* Narrow screens: the side-by-side trust picker has no room next to a
-   usable 7-column month grid - stack them instead, capping the trust list's
-   own height so the grid still gets most of the card. */
+/* Below the grid rather than beside it (see .calendar-card's widened
+   max-width) - a capped-height, scrollable strip of toggle chips reads as
+   a compact filter, not a second panel competing with the grid for space.
+   Wrapped flex chips instead of the old vertical checkbox list, matching
+   the category chips above for one consistent "toggle" visual language
+   throughout this overlay. */
+.calendar-trusts {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border);
+  margin-top: 0.75rem;
+  padding-top: 0.6rem;
+  max-height: 6.5rem;
+  overflow-y: auto;
+}
+
+.calendar-trusts-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.4rem;
+}
+.calendar-trusts-header span:first-child { flex: 1 1 auto; }
+
+.calendar-trusts-toggle {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.45rem;
+  flex: 0 0 auto;
+}
+
+/* #calendar-ics-link reuses .calendar-trusts-toggle for sizing/spacing,
+   but as an <a> it doesn't pick up the global `button` element rule's
+   chrome (border/radius/cursor) the way the All/None buttons beside it do
+   - restated here so it reads as the same kind of control, not a bare
+   text link. [aria-disabled] (no trusts/categories selected, so there's
+   nothing to subscribe to yet) dims it and blocks the click rather than
+   navigating to a feed with an empty view. */
+a.calendar-trusts-toggle {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  text-decoration: none;
+  color: var(--fg);
+  cursor: pointer;
+}
+a.calendar-trusts-toggle:hover { background: var(--hover-bg); }
+a.calendar-trusts-toggle[aria-disabled="true"] { opacity: 0.5; pointer-events: none; }
+
+.calendar-trusts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.calendar-trust-chip {
+  font: inherit;
+  font-size: 0.76rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.calendar-trust-chip.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+
 @media (max-width: 640px) {
-  .calendar-layout { flex-direction: column; }
-  .calendar-trusts {
-    flex: 0 0 auto;
-    max-height: 8rem;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    padding-right: 0;
-    padding-bottom: 0.5rem;
-  }
   .calendar-grid { grid-auto-rows: minmax(4rem, 1fr); }
+  .calendar-legend { margin-left: 0; }
 }

@@ -25,9 +25,10 @@ for (const key of ['RESEND_API_KEY', 'NOTIFY_EMAIL_FROM', 'NOTIFY_EMAIL_TO', 'DA
   }
 }
 
-const { fetchReports, LEI_RE, MAX_WINDOW_DAYS } = require('./lib/fetchReports');
+const { fetchReports, LEI_RE } = require('./lib/fetchReports');
 const { computeDueInfo, HALF_YEAR, ANNUAL } = require('./lib/dueDates');
 const { buildRssFeed } = require('./lib/buildFeed');
+const { buildIcsFeed } = require('./lib/buildIcs');
 const { sendNotification } = require('./lib/sendNotification');
 const watchlist = require('./config/watchlist');
 const { checkBasicAuth, REALM } = require('./lib/basicAuth');
@@ -40,6 +41,17 @@ const seenStore = require('./lib/seenStore');
 
 const PORT = process.env.PORT || 3000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// How far back /api/due-dates looks for Half-year/Annual filings - well
+// beyond MAX_WINDOW_DAYS (see lib/fetchReports.js's `maxDays` override),
+// since a company that files these only 1-2 times a year needs several
+// years of history to say anything meaningful, and the filing calendar
+// (app.js) wants real history for these two categories specifically, not
+// just the most recent one. Still bounded by the same
+// MAX_RESULTS_PER_COMPANY cap every other fetch uses, so a very
+// high-frequency filer's oldest Half-year/Annual reports could still fall
+// outside what's returned - best-effort, not a guarantee of full coverage.
+const DUE_DATE_HISTORY_DAYS = 5 * 365;
 
 // Validated the same way at both the POST and PUT routes below, so an
 // unrecognised/malformed value from a request body can never reach
@@ -118,16 +130,22 @@ const server = http.createServer(async (req, res) => {
   // companies - always a plain `leis` query param, never a view token
   // (see lib/viewToken.js), since this is only ever called by the app's
   // own UI for its own watchlist, not something meant to be a shareable
-  // link. Deliberately fetches the full MAX_WINDOW_DAYS regardless of
-  // whatever time period the main report list is currently showing - a
-  // company that's actually overdue is, by definition, unlikely to have
-  // filed within a short recent window, so this needs to look back much
-  // further than that to find its last filing at all.
+  // link. Deliberately fetches years further back than MAX_WINDOW_DAYS
+  // (via fetchReports()'s maxDays override) regardless of whatever time
+  // period the main report list is currently showing - a company that's
+  // actually overdue is, by definition, unlikely to have filed within a
+  // short recent window, so this needs to look back much further than
+  // that to find its last filing at all. Also doubles as the filing
+  // calendar's own source of historical Half-year/Annual filings (see
+  // app.js's loadCalendarData()), which is why the full `reports` list is
+  // returned alongside computeDueInfo()'s per-company summary, not just
+  // the summary itself.
   if (parsed.pathname === '/api/due-dates') {
     const leis = parsed.searchParams.get('leis');
     const { status, body } = await fetchReports({
       leis,
-      days: MAX_WINDOW_DAYS,
+      days: DUE_DATE_HISTORY_DAYS,
+      maxDays: DUE_DATE_HISTORY_DAYS,
       categories: `${HALF_YEAR.category},${ANNUAL.category}`,
     });
     if (status !== 200) {
@@ -136,7 +154,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ dueInfo: computeDueInfo(body.reports) }));
+    res.end(JSON.stringify({ dueInfo: computeDueInfo(body.reports), reports: body.reports }));
     return;
   }
 
@@ -163,6 +181,62 @@ const server = http.createServer(async (req, res) => {
     });
     res.writeHead(200, { 'Content-Type': 'application/rss+xml; charset=utf-8' });
     res.end(xml);
+    return;
+  }
+
+  // A subscribable calendar feed (.ics) - the same view (leis/days/
+  // categories, `v` token or readable params) as /api/reports and
+  // /api/feed above, superimposed with estimated Half-year/Annual due
+  // dates the same way the in-app filing calendar overlay does (see
+  // app.js's loadCalendarData()). Any calendar app polls this on its own
+  // schedule, so filings and due estimates show up alongside everything
+  // else in Google/Outlook/Apple Calendar instead of only in this overlay.
+  if (parsed.pathname === '/api/calendar.ics') {
+    const resolved = resolveReportQuery((key) => parsed.searchParams.get(key));
+    if (resolved.error) {
+      res.writeHead(resolved.status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: resolved.error }));
+      return;
+    }
+
+    const [recentResult, dueResult] = await Promise.all([
+      fetchReports(resolved.query),
+      fetchReports({
+        leis: resolved.query.leis,
+        days: DUE_DATE_HISTORY_DAYS,
+        maxDays: DUE_DATE_HISTORY_DAYS,
+        categories: `${HALF_YEAR.category},${ANNUAL.category}`,
+      }),
+    ]);
+
+    if (recentResult.status !== 200) {
+      res.writeHead(recentResult.status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(recentResult.body));
+      return;
+    }
+
+    // Both fetches' reports carry the same normalised `company` field
+    // (see lib/fetchReports.js's normalise()) - combined here since a
+    // company with no *recent* filing at all (so absent from
+    // recentResult) may still have Half-year/Annual history to name it
+    // from, and vice versa.
+    const namesByLei = new Map();
+    for (const r of [...recentResult.body.reports, ...(dueResult.status === 200 ? dueResult.body.reports : [])]) {
+      if (r.lei && r.company && !namesByLei.has(r.lei)) namesByLei.set(r.lei, r.company);
+    }
+    const dueInfo = dueResult.status === 200 ? computeDueInfo(dueResult.body.reports) : {};
+
+    const ics = buildIcsFeed({
+      reports: recentResult.body.reports,
+      dueInfo,
+      namesByLei,
+      calendarName: 'RNS Update',
+    });
+    res.writeHead(200, {
+      'Content-Type': 'text/calendar; charset=utf-8',
+      'Content-Disposition': 'inline; filename="rns-update.ics"',
+    });
+    res.end(ics);
     return;
   }
 

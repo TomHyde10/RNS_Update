@@ -56,6 +56,15 @@ hitting the API directly).
   as readable query params) — paste
   that URL into any feed reader to get "new report" notifications without
   this app needing to run its own email/push pipeline. See `lib/buildFeed.js`.
+- **Filing calendar**: the floating calendar button (bottom-right) opens a
+  month grid superimposing recent filings and estimated Half-year/Annual due
+  dates for a user-editable subset of your watchlist and report types
+  (independent of the main list's own settings) — see `app.js`'s
+  `openCalendarOverlay()`. Its "Add to Calendar" link is a subscribable
+  `.ics` feed (same `v`-token/readable-params handling as the RSS feed
+  above) for the trusts/categories currently ticked, so the same filings and
+  due-date estimates show up in Google/Outlook/Apple Calendar too — see
+  `lib/buildIcs.js` and `/api/calendar.ics`.
 - **Per-company filing history**: the clock icon next to each company in the
   sidebar opens a modal showing that company's full filing history for the
   last 365 days (every item NSM returns, not just ones matching your current
@@ -276,21 +285,22 @@ whole app was simpler and more robust than gating that one endpoint alone.
 
 ## Encrypted view links
 
-By default, shareable links and the RSS feed URL carry your companies and
-settings as readable query params (`?leis=…&days=7&categories=…`). Anyone
-who sees the URL can read them, including through browser history, your
-hosting provider's request logs, screenshots, and link previews in chat
-apps. Set `VIEW_TOKEN_SECRET` to replace them with a single encrypted
-`?v=<token>` param. The address bar, the RSS feed link, and the app's own
+By default, shareable links, the RSS feed URL, and the filing calendar's
+`.ics` feed URL carry your companies and settings as readable query params
+(`?leis=…&days=7&categories=…`). Anyone who sees the URL can read them,
+including through browser history, your hosting provider's request logs,
+screenshots, and link previews in chat apps. Set `VIEW_TOKEN_SECRET` to
+replace them with a single encrypted `?v=<token>` param. The address bar,
+the RSS feed link, the "Add to Calendar" link, and the app's own
 `/api/reports` requests all switch to it.
 
 - **How it works** (`lib/viewToken.js`, `/api/view`): the browser POSTs its
   current view to `/api/view`, and the server returns it compressed and
   encrypted with AES-256-GCM, under a key derived from `VIEW_TOKEN_SECRET`.
   The key never leaves the server. Opening a link sends the token back to
-  `/api/view` to decrypt, and `/api/reports`/`/api/feed` accept `v`
-  directly. An edited or truncated token is rejected rather than opening a
-  different view.
+  `/api/view` to decrypt, and `/api/reports`/`/api/feed`/`/api/calendar.ics`
+  accept `v` directly. An edited or truncated token is rejected rather than
+  opening a different view.
 - **What it doesn't do:** anyone who opens a link still sees that view. The
   server decrypts it for them, and opening it adds its companies to their
   watchlist as before, so `APP_PASSWORD` is still what controls access. A
