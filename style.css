@@ -1013,7 +1013,7 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
 
 .notifications-email-address { flex: 1 1 auto; min-width: 0; font-size: 0.85rem; overflow-wrap: anywhere; }
 
-.notifications-email-frequency {
+.notifications-email-schedule, .notifications-email-time {
   font: inherit;
   font-size: 0.8rem;
   padding: 0.25rem 0.4rem;
@@ -1023,6 +1023,7 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   color: var(--fg);
   flex: 0 0 auto;
 }
+.notifications-email-time { width: 6.5rem; }
 
 .notifications-email-empty { padding: 0.5rem; }
 

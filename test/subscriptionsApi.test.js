@@ -33,15 +33,16 @@ describe('/api/subscriptions', () => {
     const fakeStore = {
       enabled: true,
       listSubscriptions: async () => rows.map((r) => ({ ...r })),
-      createSubscription: async ({ email, frequencyMinutes, prefs }) => {
-        const row = { id: crypto.randomUUID(), email, frequencyMinutes: frequencyMinutes || 0, prefs: prefs || {}, lastSentAt: null, createdAt: new Date().toISOString() };
+      createSubscription: async ({ email, scheduleType, sendTimeUtc, prefs }) => {
+        const row = { id: crypto.randomUUID(), email, scheduleType: scheduleType || 'daily', sendTimeUtc: sendTimeUtc || '08:00', prefs: prefs || {}, lastSentAt: null, createdAt: new Date().toISOString() };
         rows.push(row);
         return { ...row };
       },
-      updateSubscription: async (id, { frequencyMinutes, prefs }) => {
+      updateSubscription: async (id, { scheduleType, sendTimeUtc, prefs }) => {
         const row = rows.find((r) => r.id === id);
         if (!row) return null;
-        row.frequencyMinutes = frequencyMinutes || 0;
+        row.scheduleType = scheduleType || 'daily';
+        row.sendTimeUtc = sendTimeUtc || '08:00';
         row.prefs = prefs || {};
         return { ...row };
       },
@@ -77,41 +78,55 @@ describe('/api/subscriptions', () => {
     const res = await fetch(`${BASE_URL}/api/subscriptions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: ALLOWED_EMAIL, frequencyMinutes: 1440, prefs: {} }),
+      body: JSON.stringify({ email: ALLOWED_EMAIL, scheduleType: 'daily', sendTimeUtc: '08:00', prefs: {} }),
     });
     const data = await res.json();
     assert.equal(res.status, 200);
     assert.equal(data.subscription.email, ALLOWED_EMAIL);
-    assert.equal(data.subscription.frequencyMinutes, 1440);
+    assert.equal(data.subscription.scheduleType, 'daily');
+    assert.equal(data.subscription.sendTimeUtc, '08:00');
     assert.ok(data.subscription.id);
     assert.equal(data.subscription.lastSentAt, null);
+  });
+
+  it('falls back to daily/08:00 for a missing or malformed scheduleType/sendTimeUtc', async () => {
+    const res = await fetch(`${BASE_URL}/api/subscriptions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: ALLOWED_EMAIL, scheduleType: 'not-a-real-type', sendTimeUtc: '25:99', prefs: {} }),
+    });
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(data.subscription.scheduleType, 'daily');
+    assert.equal(data.subscription.sendTimeUtc, '08:00');
   });
 
   it('rejects an invalid email address', async () => {
     const res = await fetch(`${BASE_URL}/api/subscriptions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'not-an-email', frequencyMinutes: 60, prefs: {} }),
+      body: JSON.stringify({ email: 'not-an-email', scheduleType: 'daily', sendTimeUtc: '08:00', prefs: {} }),
     });
     assert.equal(res.status, 400);
   });
 
-  it('PUT updates frequency and prefs for an existing subscription', async () => {
+  it('PUT updates schedule and prefs for an existing subscription', async () => {
     const created = await (await fetch(`${BASE_URL}/api/subscriptions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: ALLOWED_EMAIL, frequencyMinutes: 60, prefs: {} }),
+      body: JSON.stringify({ email: ALLOWED_EMAIL, scheduleType: 'daily', sendTimeUtc: '08:00', prefs: {} }),
     })).json();
 
     const prefs = { LEI1: { name: 'Co', categories: ['Half-year Financial Report'] } };
     const res = await fetch(`${BASE_URL}/api/subscriptions/${created.subscription.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ frequencyMinutes: 10080, prefs }),
+      body: JSON.stringify({ scheduleType: 'monthly', sendTimeUtc: '14:30', prefs }),
     });
     const data = await res.json();
     assert.equal(res.status, 200);
-    assert.equal(data.subscription.frequencyMinutes, 10080);
+    assert.equal(data.subscription.scheduleType, 'monthly');
+    assert.equal(data.subscription.sendTimeUtc, '14:30');
     assert.deepEqual(data.subscription.prefs, prefs);
   });
 
@@ -119,7 +134,7 @@ describe('/api/subscriptions', () => {
     const res = await fetch(`${BASE_URL}/api/subscriptions/does-not-exist`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ frequencyMinutes: 60, prefs: {} }),
+      body: JSON.stringify({ scheduleType: 'daily', sendTimeUtc: '08:00', prefs: {} }),
     });
     assert.equal(res.status, 404);
   });
@@ -128,7 +143,7 @@ describe('/api/subscriptions', () => {
     const created = await (await fetch(`${BASE_URL}/api/subscriptions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: ALLOWED_EMAIL, frequencyMinutes: 60, prefs: {} }),
+      body: JSON.stringify({ email: ALLOWED_EMAIL, scheduleType: 'daily', sendTimeUtc: '08:00', prefs: {} }),
     })).json();
 
     const del = await fetch(`${BASE_URL}/api/subscriptions/${created.subscription.id}`, { method: 'DELETE' });
@@ -142,7 +157,7 @@ describe('/api/subscriptions', () => {
     const created = await (await fetch(`${BASE_URL}/api/subscriptions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: ALLOWED_EMAIL, frequencyMinutes: 60, prefs: {} }),
+      body: JSON.stringify({ email: ALLOWED_EMAIL, scheduleType: 'daily', sendTimeUtc: '08:00', prefs: {} }),
     })).json();
 
     // RESEND_API_KEY is deliberately unset above, so this fails fast on
@@ -164,7 +179,7 @@ describe('/api/subscriptions', () => {
     const created = await (await fetch(`${BASE_URL}/api/subscriptions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: ALLOWED_EMAIL, frequencyMinutes: 60, prefs: {} }),
+      body: JSON.stringify({ email: ALLOWED_EMAIL, scheduleType: 'daily', sendTimeUtc: '08:00', prefs: {} }),
     })).json();
 
     // Same "fails fast on missing RESEND_API_KEY, never touches the
@@ -185,14 +200,14 @@ describe('/api/subscriptions', () => {
     const denied = await fetch(`${BASE_URL}/api/subscriptions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'not-allowed@example.com', frequencyMinutes: 60, prefs: {} }),
+      body: JSON.stringify({ email: 'not-allowed@example.com', scheduleType: 'daily', sendTimeUtc: '08:00', prefs: {} }),
     });
     assert.equal(denied.status, 403);
 
     const allowed = await fetch(`${BASE_URL}/api/subscriptions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: ALLOWED_EMAIL, frequencyMinutes: 60, prefs: {} }),
+      body: JSON.stringify({ email: ALLOWED_EMAIL, scheduleType: 'daily', sendTimeUtc: '08:00', prefs: {} }),
     });
     assert.equal(allowed.status, 200);
   });

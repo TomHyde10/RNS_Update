@@ -1844,15 +1844,35 @@ const NOTIFICATION_CATEGORY_LABELS = {
   'Portfolio Update': 'Portfolio',
   'Miscellaneous': 'Misc',
 };
-// [minutes, label] - generates each email row's own frequency <select>
-// (previously one shared dropdown above the list, now per-row).
-const NOTIFICATION_FREQUENCIES = [
-  [0, 'Paused'],
-  [60, 'Every hour'],
-  [360, 'Every 6 hours'],
-  [1440, 'Daily'],
-  [10080, 'Weekly'],
+// [value, label] - generates each email row's own schedule <select>. Daily
+// and monthly send at that subscription's own send_time_utc (a <input
+// type="time"> shown alongside the select, GMT); "immediate" ("as they
+// occur") has no time of its own - see IMMEDIATE_CATEGORIES below for the
+// category restriction that comes with it.
+const NOTIFICATION_SCHEDULE_TYPES = [
+  ['paused', 'Paused'],
+  ['daily', 'Daily'],
+  ['monthly', 'Monthly'],
+  ['immediate', 'As they occur'],
 ];
+const SCHEDULE_TYPES_WITH_TIME = new Set(['daily', 'monthly']);
+const DEFAULT_SEND_TIME_UTC = '08:00';
+
+// Mirrors lib/sendDigest.js's IMMEDIATE_CATEGORIES - an "immediate"
+// subscription only ever notifies for these two, since they're the only
+// ones with an actual filing deadline worth hearing about the moment they
+// land (see lib/dueDates.js). Enforced here too (not just server-side) so
+// the matrix simply doesn't offer the other four as options for it.
+const IMMEDIATE_CATEGORIES = ['Half-year Financial Report', 'Annual Financial Report'];
+
+// Which categories a given subscription may select at all - every category
+// for daily/monthly/paused, only the immediate-eligible two for "as they
+// occur".
+function categoriesForSchedule(subscription) {
+  return subscription && subscription.scheduleType === 'immediate'
+    ? IMMEDIATE_CATEGORIES
+    : NOTIFICATION_CATEGORIES;
+}
 
 let notificationsState = { enabled: false, subscriptions: [], selectedId: null };
 // Which trusts currently have their per-category detail expanded - a
@@ -1893,7 +1913,7 @@ function setAllCategoriesForTrust(lei, checked) {
   if (!subscription) return;
   const company = loadWatchlist().find((c) => c.lei === lei);
   if (checked) {
-    subscription.prefs[lei] = { name: (company && company.name) || lei, categories: [...NOTIFICATION_CATEGORIES] };
+    subscription.prefs[lei] = { name: (company && company.name) || lei, categories: [...categoriesForSchedule(subscription)] };
   } else {
     delete subscription.prefs[lei];
   }
@@ -1904,6 +1924,7 @@ function setAllCategoriesForTrust(lei, checked) {
 function setCategoryForAllTrusts(category, checked) {
   const subscription = currentSubscription();
   if (!subscription) return;
+  if (!categoriesForSchedule(subscription).includes(category)) return;
   for (const company of loadWatchlist()) {
     const existing = subscription.prefs[company.lei] || { name: company.name || company.lei, categories: [] };
     const categories = new Set(existing.categories);
@@ -1926,7 +1947,7 @@ function setAllCategoriesForAllTrusts(checked) {
   if (!subscription) return;
   for (const company of loadWatchlist()) {
     if (checked) {
-      subscription.prefs[company.lei] = { name: company.name || company.lei, categories: [...NOTIFICATION_CATEGORIES] };
+      subscription.prefs[company.lei] = { name: company.name || company.lei, categories: [...categoriesForSchedule(subscription)] };
     } else {
       delete subscription.prefs[company.lei];
     }
@@ -1946,13 +1967,25 @@ function setAllCategoriesForAllTrusts(checked) {
 // one of the per-category loop below) - handled separately since its
 // active state depends on every category for every trust, not just one.
 function updateNotificationsBulkChips(subscription, watchlist) {
+  const eligibleCategories = categoriesForSchedule(subscription);
   document.querySelectorAll('.notifications-bulk-chip[data-category]').forEach((chip) => {
+    // "As they occur" only accepts Half-year/Annual - the other four chips
+    // are disabled rather than hidden, so the row layout doesn't jump
+    // around when switching a subscription's schedule type back and forth.
+    if (!eligibleCategories.includes(chip.dataset.category)) {
+      chip.classList.remove('is-active');
+      chip.disabled = true;
+      chip.title = 'Only available for Daily/Monthly subscriptions - "As they occur" only covers Half-year and Annual reports.';
+      return;
+    }
     if (watchlist.length === 0) {
       chip.classList.remove('is-active');
       chip.disabled = true;
+      chip.title = '';
       return;
     }
     chip.disabled = false;
+    chip.title = '';
     const selectedCount = watchlist.filter((c) => {
       const categories = (subscription.prefs[c.lei] && subscription.prefs[c.lei].categories) || [];
       return categories.includes(chip.dataset.category);
@@ -1968,7 +2001,7 @@ function updateNotificationsBulkChips(subscription, watchlist) {
     selectAllChip.disabled = false;
     const everyTrustFullySelected = watchlist.every((c) => {
       const categories = (subscription.prefs[c.lei] && subscription.prefs[c.lei].categories) || [];
-      return categories.length === NOTIFICATION_CATEGORIES.length;
+      return categories.length === eligibleCategories.length;
     });
     selectAllChip.classList.toggle('is-active', everyTrustFullySelected);
   }
@@ -1990,15 +2023,22 @@ function renderNotificationsMatrix(subscription) {
     return;
   }
 
+  const eligibleCategories = categoriesForSchedule(subscription);
+
   for (const company of watchlist) {
     const name = company.name || company.lei;
-    const selected = (subscription.prefs[company.lei] && subscription.prefs[company.lei].categories) || [];
-    const allSelected = selected.length === NOTIFICATION_CATEGORIES.length;
+    // Filtered to only the categories this subscription's schedule can
+    // still notify for - a category left over in prefs from before a
+    // switch to "immediate" shouldn't render checked or count towards
+    // "All types" once it's no longer selectable.
+    const storedSelected = (subscription.prefs[company.lei] && subscription.prefs[company.lei].categories) || [];
+    const selected = storedSelected.filter((c) => eligibleCategories.includes(c));
+    const allSelected = selected.length === eligibleCategories.length;
     const expanded = notificationsExpandedLeis.has(company.lei);
 
     let countLabel = '';
     if (allSelected) countLabel = 'All types';
-    else if (selected.length > 0) countLabel = `${selected.length} of ${NOTIFICATION_CATEGORIES.length} types`;
+    else if (selected.length > 0) countLabel = `${selected.length} of ${eligibleCategories.length} types`;
 
     const li = document.createElement('li');
     li.className = 'notifications-trust-row';
@@ -2010,7 +2050,7 @@ function renderNotificationsMatrix(subscription) {
         <span class="notifications-trust-count">${countLabel}</span>
       </div>
       <div class="notifications-trust-detail"${expanded ? '' : ' hidden'}>
-        ${NOTIFICATION_CATEGORIES.map((category) => `
+        ${eligibleCategories.map((category) => `
           <label class="notifications-detail-item">
             <input type="checkbox" class="notifications-pref" data-lei="${escapeHtml(company.lei)}" data-category="${escapeHtml(category)}" ${selected.includes(category) ? 'checked' : ''} />
             ${escapeHtml(NOTIFICATION_CATEGORY_LABELS[category])}
@@ -2046,10 +2086,11 @@ function renderNotificationsMatrix(subscription) {
   updateNotificationsBulkChips(subscription, watchlist);
 }
 
-// One row per subscribed email - address, its own frequency select, and a
-// remove button - instead of a dropdown that only shows one at a time plus
-// a separate always-visible "type a new one" row. Clicking a row (anywhere
-// but its own select/button) selects it as the one being configured below.
+// One row per subscribed email - address, its own schedule select (plus a
+// GMT time-of-day picker for daily/monthly), and a remove button - instead
+// of a dropdown that only shows one at a time plus a separate
+// always-visible "type a new one" row. Clicking a row (anywhere but its own
+// select/input/button) selects it as the one being configured below.
 function renderNotificationsEmailList() {
   const listEl = document.getElementById('notifications-email-list');
   listEl.innerHTML = '';
@@ -2060,31 +2101,47 @@ function renderNotificationsEmailList() {
   }
 
   for (const subscription of notificationsState.subscriptions) {
+    const scheduleType = subscription.scheduleType || 'daily';
+    const showTime = SCHEDULE_TYPES_WITH_TIME.has(scheduleType);
+
     const li = document.createElement('li');
     li.className = subscription.id === notificationsState.selectedId
       ? 'notifications-email-row is-selected'
       : 'notifications-email-row';
     li.innerHTML = `
       <span class="notifications-email-address">${escapeHtml(subscription.email)}</span>
-      <select class="notifications-email-frequency">
-        ${NOTIFICATION_FREQUENCIES.map(([minutes, label]) => `<option value="${minutes}" ${minutes === (subscription.frequencyMinutes || 0) ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+      <select class="notifications-email-schedule">
+        ${NOTIFICATION_SCHEDULE_TYPES.map(([value, label]) => `<option value="${value}" ${value === scheduleType ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
       </select>
+      <input type="time" class="notifications-email-time" value="${escapeHtml(subscription.sendTimeUtc || DEFAULT_SEND_TIME_UTC)}" title="Time of day (GMT) to send" ${showTime ? '' : 'hidden'} />
       <button type="button" class="notifications-send-now" title="Send this digest now, using whatever's new since its last send">Send now</button>
       <button type="button" class="notifications-send-test" title="Send a real test email right now, with recent reports regardless of what's new - doesn't affect the digest's normal schedule">Send test</button>
       <button type="button" class="remove-company" aria-label="Remove ${escapeHtml(subscription.email)}" title="Remove this email">&times;</button>
     `;
 
     li.addEventListener('click', (e) => {
-      if (e.target.closest('select, button')) return;
+      if (e.target.closest('select, input, button')) return;
       notificationsState.selectedId = subscription.id;
       renderNotificationsOverlay();
     });
 
-    li.querySelector('.notifications-email-frequency').addEventListener('change', (e) => {
-      subscription.frequencyMinutes = parseInt(e.target.value, 10) || 0;
+    const scheduleSelect = li.querySelector('.notifications-email-schedule');
+    scheduleSelect.addEventListener('change', (e) => {
+      subscription.scheduleType = e.target.value;
+      saveCurrentSubscription();
+      // Re-render the whole overlay, not just this row - switching to/from
+      // "immediate" shows/hides the time input here and changes which
+      // categories the matrix below offers.
+      renderNotificationsOverlay();
+    });
+    scheduleSelect.addEventListener('click', (e) => e.stopPropagation());
+
+    const timeInput = li.querySelector('.notifications-email-time');
+    timeInput.addEventListener('change', (e) => {
+      subscription.sendTimeUtc = e.target.value || DEFAULT_SEND_TIME_UTC;
       saveCurrentSubscription();
     });
-    li.querySelector('.notifications-email-frequency').addEventListener('click', (e) => e.stopPropagation());
+    timeInput.addEventListener('click', (e) => e.stopPropagation());
 
     li.querySelector('.notifications-send-now').addEventListener('click', () => sendSubscriptionNow(subscription));
     li.querySelector('.notifications-send-test').addEventListener('click', () => sendSubscriptionTest(subscription));
@@ -2183,7 +2240,7 @@ async function saveCurrentSubscription() {
     const res = await fetch(`/api/subscriptions/${encodeURIComponent(subscription.id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ frequencyMinutes: subscription.frequencyMinutes, prefs: subscription.prefs }),
+      body: JSON.stringify({ scheduleType: subscription.scheduleType, sendTimeUtc: subscription.sendTimeUtc, prefs: subscription.prefs }),
     });
     const { ok, status, data } = await parseJsonResponse(res);
     if (!ok) throw new Error(data.error || `Couldn't save (${status})`);
@@ -2214,7 +2271,11 @@ function toggleNotificationPref(lei, category, checked) {
   renderNotificationsMatrix(subscription);
 }
 
-document.getElementById('notifications-button').addEventListener('click', async () => {
+// Shared by the Notifications button and the `#notifications` deep link a
+// digest email's "Manage notification preferences" footer link points at
+// (see lib/sendDigest.js's wrapEmail()) - both just need to open the
+// overlay and load whatever's actually saved.
+async function openNotificationsOverlay() {
   document.getElementById('notifications-overlay').hidden = false;
   showNotificationsStatus('');
   try {
@@ -2223,7 +2284,9 @@ document.getElementById('notifications-button').addEventListener('click', async 
     showNotificationsStatus(`Failed to load: ${err.message || err}`);
   }
   renderNotificationsOverlay();
-});
+}
+
+document.getElementById('notifications-button').addEventListener('click', openNotificationsOverlay);
 
 document.getElementById('notifications-close').addEventListener('click', () => {
   document.getElementById('notifications-overlay').hidden = true;
@@ -2256,7 +2319,7 @@ document.getElementById('notifications-email-add').addEventListener('click', asy
     const res = await fetch('/api/subscriptions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, frequencyMinutes: 1440, prefs: {} }),
+      body: JSON.stringify({ email, scheduleType: 'daily', sendTimeUtc: DEFAULT_SEND_TIME_UTC, prefs: {} }),
     });
     const { ok, status, data } = await parseJsonResponse(res);
     if (!ok) throw new Error(data.error || `Couldn't add (${status})`);
@@ -2291,5 +2354,12 @@ document.getElementById('notifications-email-add').addEventListener('click', asy
   if (urlViewError) {
     const statusEl = document.getElementById('status');
     statusEl.textContent = `${urlViewError} ${statusEl.textContent}`;
+  }
+
+  // Lets a digest email's "Manage notification preferences" footer link
+  // (see lib/sendDigest.js's wrapEmail()) open straight into this overlay
+  // instead of just landing on the plain report list.
+  if (window.location.hash === '#notifications') {
+    openNotificationsOverlay();
   }
 })();

@@ -189,17 +189,30 @@ just the Resend account's own signup email.
 
 The **Notifications** button (top-left, next to the title) opens a
 subscription manager, independent of the manual Send Notification flow
-above: each email address gets its own send frequency (paused / hourly /
-every 6 hours / daily / weekly) and its own matrix of which trusts, and
-which report types per trust, it should be notified about. On its schedule,
-that address gets one collated email listing everything that matched since
-its last send — not one email per report.
+above: each email address gets its own schedule (paused / daily / monthly /
+as they occur) and its own matrix of which trusts, and which report types
+per trust, it should be notified about.
+
+- **Daily** and **monthly** send one collated email — everything that
+  matched since the last send — at a GMT time of day you choose per
+  subscription (monthly always fires on the 1st).
+- **As they occur** sends the moment a new Half-year or Annual Financial
+  Report is found for a watched trust — the only two categories with an
+  actual filing deadline worth hearing about immediately (see "Estimated
+  filing due dates" below) — with no fixed heartbeat, and never an empty
+  email. The other four report types aren't offered for this schedule.
+
+Every digest email's footer links back to the Notifications overlay
+(`${APP_URL}/#notifications`) so adjusting or pausing a subscription never
+requires hunting for the button — set **`APP_URL`** to your deployment's
+own public URL to enable it (omitted otherwise).
 
 This genuinely runs without a browser tab open: subscriptions live in
 Postgres (`lib/subscriptionStore.js`, `notification_subscriptions` table,
 auto-created on first use) rather than `localStorage`, and `server.js` runs
-a `setInterval` loop (`runDueDigests()`, checks every 5 minutes) that sends
-whatever's due. Requires:
+a self-rescheduling loop (`runDueDigests()`) that sends whatever's due,
+checking every 5 minutes normally or every minute while any subscription is
+set to "as they occur". Requires:
 
 - **`DATABASE_URL`** — see "Persistent cache (Postgres)" below for setup.
   Without it, the Notifications overlay shows a message explaining that a
@@ -215,9 +228,10 @@ whatever's due. Requires:
   an open relay for recurring, not just one-off, email.
 
 A brand-new subscription's first send covers exactly one cycle back (a
-"daily" subscription's first email covers the last 24h, "weekly" the last
-7 days) rather than its entire history, so turning one on doesn't suddenly
-dump a backlog on someone. Only relevant on Render/Northflank/local (where
+"daily" or "as they occur" subscription's first email covers the last 24h,
+"monthly" the last 30 days) rather than its entire history, so turning one
+on doesn't suddenly dump a backlog on someone. Only relevant on
+Render/Northflank/local (where
 `server.js` is a long-running process) — the Vercel deployment's `api/*.js`
 functions are serverless with nothing to run a background loop, so
 automatic digests don't fire there without separately configuring Vercel

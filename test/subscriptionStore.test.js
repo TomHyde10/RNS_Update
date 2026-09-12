@@ -44,11 +44,12 @@ if (!TEST_DATABASE_URL) {
     });
 
     it('creates a subscription and reads it back via listSubscriptions', async () => {
-      const created = await store.createSubscription({ email: testEmail(), frequencyMinutes: 1440, prefs: {} });
+      const created = await store.createSubscription({ email: testEmail(), scheduleType: 'daily', sendTimeUtc: '08:00', prefs: {} });
       createdIds.push(created.id);
 
       assert.ok(created.id);
-      assert.equal(created.frequencyMinutes, 1440);
+      assert.equal(created.scheduleType, 'daily');
+      assert.equal(created.sendTimeUtc, '08:00');
       assert.equal(created.lastSentAt, null);
       assert.ok(created.createdAt);
 
@@ -56,23 +57,24 @@ if (!TEST_DATABASE_URL) {
       assert.ok(all.some((s) => s.id === created.id));
     });
 
-    it('updates frequency and prefs', async () => {
-      const created = await store.createSubscription({ email: testEmail(), frequencyMinutes: 60, prefs: {} });
+    it('updates schedule and prefs', async () => {
+      const created = await store.createSubscription({ email: testEmail(), scheduleType: 'daily', sendTimeUtc: '08:00', prefs: {} });
       createdIds.push(created.id);
 
       const prefs = { LEI1: { name: 'Co', categories: ['Half-year Financial Report'] } };
-      const updated = await store.updateSubscription(created.id, { frequencyMinutes: 10080, prefs });
-      assert.equal(updated.frequencyMinutes, 10080);
+      const updated = await store.updateSubscription(created.id, { scheduleType: 'monthly', sendTimeUtc: '14:30', prefs });
+      assert.equal(updated.scheduleType, 'monthly');
+      assert.equal(updated.sendTimeUtc, '14:30');
       assert.deepEqual(updated.prefs, prefs);
     });
 
     it('updateSubscription on an unknown id returns null rather than throwing', async () => {
-      const result = await store.updateSubscription('00000000-0000-0000-0000-000000000000', { frequencyMinutes: 60, prefs: {} });
+      const result = await store.updateSubscription('00000000-0000-0000-0000-000000000000', { scheduleType: 'daily', sendTimeUtc: '08:00', prefs: {} });
       assert.equal(result, null);
     });
 
     it('markSent sets lastSentAt', async () => {
-      const created = await store.createSubscription({ email: testEmail(), frequencyMinutes: 60, prefs: {} });
+      const created = await store.createSubscription({ email: testEmail(), scheduleType: 'daily', sendTimeUtc: '08:00', prefs: {} });
       createdIds.push(created.id);
 
       const sentAt = new Date();
@@ -82,7 +84,7 @@ if (!TEST_DATABASE_URL) {
     });
 
     it('deleteSubscription removes it', async () => {
-      const created = await store.createSubscription({ email: testEmail(), frequencyMinutes: 60, prefs: {} });
+      const created = await store.createSubscription({ email: testEmail(), scheduleType: 'daily', sendTimeUtc: '08:00', prefs: {} });
       await store.deleteSubscription(created.id);
       const all = await store.listSubscriptions();
       assert.ok(!all.some((s) => s.id === created.id));

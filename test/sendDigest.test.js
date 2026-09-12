@@ -6,25 +6,57 @@
 // pipeline around them is covered without a live network dependency.
 const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { digestWindowStart, filterDigestReports, buildDigestHtml, digestSendAllowed, isEmptyDigestThrottled } = require('../lib/sendDigest');
+const { digestWindowStart, filterDigestReports, buildDigestHtml, digestSendAllowed, isEmptyDigestThrottled, restrictToImmediateCategories, IMMEDIATE_CATEGORIES } = require('../lib/sendDigest');
 
 describe('digestWindowStart', () => {
-  it('covers exactly one cycle back for a subscription that has never sent', () => {
+  it('covers the last 24h for a never-sent "daily" subscription', () => {
     const now = new Date('2026-01-02T12:00:00Z');
-    const since = digestWindowStart({ frequencyMinutes: 1440, lastSentAt: null }, now);
+    const since = digestWindowStart({ scheduleType: 'daily', lastSentAt: null }, now);
     assert.equal(since.toISOString(), '2026-01-01T12:00:00.000Z');
   });
 
-  it('scales the never-sent window to the subscription\'s own frequency', () => {
-    const now = new Date('2026-01-08T00:00:00Z');
-    const since = digestWindowStart({ frequencyMinutes: 10080, lastSentAt: null }, now); // weekly
+  it('covers the last 30 days for a never-sent "monthly" subscription', () => {
+    const now = new Date('2026-01-31T00:00:00Z');
+    const since = digestWindowStart({ scheduleType: 'monthly', lastSentAt: null }, now);
     assert.equal(since.toISOString(), '2026-01-01T00:00:00.000Z');
   });
 
-  it('uses lastSentAt when present, regardless of frequency', () => {
+  it('covers the last 24h for a never-sent "immediate" subscription', () => {
     const now = new Date('2026-01-02T12:00:00Z');
-    const since = digestWindowStart({ frequencyMinutes: 1440, lastSentAt: '2026-01-02T09:00:00Z' }, now);
+    const since = digestWindowStart({ scheduleType: 'immediate', lastSentAt: null }, now);
+    assert.equal(since.toISOString(), '2026-01-01T12:00:00.000Z');
+  });
+
+  it('uses lastSentAt when present, regardless of scheduleType', () => {
+    const now = new Date('2026-01-02T12:00:00Z');
+    const since = digestWindowStart({ scheduleType: 'daily', lastSentAt: '2026-01-02T09:00:00Z' }, now);
     assert.equal(since.toISOString(), '2026-01-02T09:00:00.000Z');
+  });
+});
+
+describe('restrictToImmediateCategories', () => {
+  it('keeps only Half-year/Annual for each LEI, dropping LEIs left with nothing', () => {
+    const prefs = {
+      LEI1: { name: 'Co One', categories: ['Half-year Financial Report', 'Dividend Declaration'] },
+      LEI2: { name: 'Co Two', categories: ['Dividend Declaration', 'Net Asset Value(s)'] },
+    };
+    const restricted = restrictToImmediateCategories(prefs);
+    assert.deepEqual(restricted.LEI1.categories, ['Half-year Financial Report']);
+    assert.equal(restricted.LEI2, undefined);
+  });
+
+  it('leaves an already-eligible-only subscription unchanged in substance', () => {
+    const prefs = { LEI1: { name: 'Co', categories: ['Annual Financial Report'] } };
+    assert.deepEqual(restrictToImmediateCategories(prefs).LEI1.categories, ['Annual Financial Report']);
+  });
+
+  it('handles an empty/missing prefs object', () => {
+    assert.deepEqual(restrictToImmediateCategories({}), {});
+    assert.deepEqual(restrictToImmediateCategories(undefined), {});
+  });
+
+  it('exposes exactly Half-year and Annual as the eligible set', () => {
+    assert.deepEqual(IMMEDIATE_CATEGORIES, ['Half-year Financial Report', 'Annual Financial Report']);
   });
 });
 

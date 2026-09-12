@@ -41,6 +41,20 @@ const seenStore = require('./lib/seenStore');
 const PORT = process.env.PORT || 3000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Validated the same way at both the POST and PUT routes below, so an
+// unrecognised/malformed value from a request body can never reach
+// subscriptionStore - falls back to sensible defaults rather than
+// rejecting the request outright, matching how frequencyMinutes was
+// coerced with `|| 0` before this schedule model existed.
+const VALID_SCHEDULE_TYPES = new Set(['paused', 'daily', 'monthly', 'immediate']);
+function normalizeScheduleType(value) {
+  return VALID_SCHEDULE_TYPES.has(value) ? value : 'daily';
+}
+const SEND_TIME_UTC_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+function normalizeSendTimeUtc(value) {
+  return SEND_TIME_UTC_RE.test(value) ? value : '08:00';
+}
+
 const STATIC_FILES = {
   '/': { file: 'index.html', type: 'text/html' },
   '/index.html': { file: 'index.html', type: 'text/html' },
@@ -317,13 +331,14 @@ const server = http.createServer(async (req, res) => {
       try {
         const subscription = await subscriptionStore.createSubscription({
           email,
-          frequencyMinutes: parseInt(body.frequencyMinutes, 10) || 0,
+          scheduleType: normalizeScheduleType(body.scheduleType),
+          sendTimeUtc: normalizeSendTimeUtc(body.sendTimeUtc),
           prefs: body.prefs && typeof body.prefs === 'object' ? body.prefs : {},
         });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ subscription }));
         // Not awaited - the response above shouldn't wait on this. Picks
-        // up a newly-created subscription's own frequency immediately
+        // up a newly-created subscription's own schedule immediately
         // rather than leaving the scheduler on whatever interval it had
         // computed before this subscription existed.
         scheduleNextDigestCheck();
@@ -345,7 +360,8 @@ const server = http.createServer(async (req, res) => {
       }
       try {
         const subscription = await subscriptionStore.updateSubscription(id, {
-          frequencyMinutes: parseInt(body.frequencyMinutes, 10) || 0,
+          scheduleType: normalizeScheduleType(body.scheduleType),
+          sendTimeUtc: normalizeSendTimeUtc(body.sendTimeUtc),
           prefs: body.prefs && typeof body.prefs === 'object' ? body.prefs : {},
         });
         if (!subscription) {
@@ -356,7 +372,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ subscription }));
         // Not awaited - see the same call in the POST route above. A
-        // frequency change (faster or slower, or pausing) should be
+        // schedule change (a new type, a new time, or pausing) should be
         // reflected in the scheduler's own check cadence right away.
         scheduleNextDigestCheck();
       } catch (err) {
@@ -371,7 +387,7 @@ const server = http.createServer(async (req, res) => {
   // same sendDigestForSubscription()+markSent() the scheduler itself calls -
   // not a fake "test" email, an actual early send, so someone setting up a
   // digest can confirm delivery/formatting works without waiting for its
-  // frequency to come due. If nothing's matched since the last send, this
+  // schedule to come due. If nothing's matched since the last send, this
   // still returns 200 with sent:false - "nothing new right now" is a normal
   // outcome, not an error.
   if (parsed.pathname.startsWith('/api/subscriptions/') && parsed.pathname.endsWith('/send-now') && req.method === 'POST') {
@@ -470,14 +486,15 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-// Checks every subscription against its own frequency and sends any that
+// Checks every subscription against its own schedule and sends any that
 // are due. Runs from a self-rescheduling setTimeout rather than an
 // external cron or a fixed setInterval, since this process (unlike the
 // Vercel serverless functions in api/*.js) stays alive between requests -
 // see the "truly automatic" tradeoff noted in lib/subscriptionStore.js. A
-// subscription's own due-ness is time-based (last_sent_at + its
-// frequency), so a missed or delayed tick just sends slightly late rather
-// than skipping content. The actual due-check/send logic lives in
+// subscription's own due-ness is time-based (its schedule_type and
+// send_time_utc against last_sent_at), so a missed or delayed tick just
+// sends slightly late rather than skipping content. The actual due-check/
+// send logic lives in
 // lib/digestScheduler.js (unit-tested there against a fake store and
 // sender) - this just supplies the real ones.
 function runDueDigests() {
