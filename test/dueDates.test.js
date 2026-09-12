@@ -51,6 +51,19 @@ describe('computeDueInfo', () => {
     assert.equal(info.LEI1.annual.lastFiledAt, '2025-12-01T00:00:00.000Z');
   });
 
+  it('exposes an estimated dueDate (last filed + period + grace) for each category', () => {
+    const reports = [{ lei: 'LEI1', category: HALF_YEAR.category, publishedAt: '2026-01-01T00:00:00Z' }];
+    const info = computeDueInfo(reports, now);
+    const expected = new Date(new Date('2026-01-01T00:00:00Z').getTime() + (HALF_YEAR.periodDays + HALF_YEAR.graceDays) * DAY_MS);
+    assert.equal(info.LEI1.halfYear.dueDate, expected.toISOString());
+  });
+
+  it('leaves dueDate null for a category with no prior filing seen', () => {
+    const reports = [{ lei: 'LEI1', category: HALF_YEAR.category, publishedAt: '2026-01-01T00:00:00Z' }];
+    const info = computeDueInfo(reports, now);
+    assert.equal(info.LEI1.annual.dueDate, null);
+  });
+
   it('ignores categories other than Half-year/Annual entirely (not even an "unknown" entry)', () => {
     const reports = [{ lei: 'LEI1', category: 'Net Asset Value(s)', publishedAt: '2026-05-01T00:00:00Z' }];
     const info = computeDueInfo(reports, now);

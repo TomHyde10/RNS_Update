@@ -581,6 +581,270 @@ document.getElementById('due-dates-close').addEventListener('click', () => {
   document.getElementById('due-dates-overlay').hidden = true;
 });
 
+// Filing calendar: a month grid superimposing recent filings and estimated
+// Half-year/Annual due dates (see lib/dueDates.js) for a user-editable
+// subset of the watchlist - independent of the main report list's own
+// day-window/category settings, and independent of a company's "enabled"
+// checkbox in Edit companies (a company can be watched here without being
+// part of the active search). Which trusts are shown persists in
+// localStorage across sessions; which month is displayed does not.
+const CALENDAR_TRUSTS_KEY = 'rns-calendar-trusts';
+let calendarSelectedLeis = new Set();
+let calendarMonth = new Date();
+let calendarItemsByLei = {}; // lei -> this company's own filing history (all categories)
+let calendarDueInfoByLei = {}; // lei -> { halfYear, annual } (see lib/dueDates.js's computeDueInfo)
+
+function loadCalendarTrusts() {
+  try {
+    const raw = localStorage.getItem(CALENDAR_TRUSTS_KEY);
+    return raw ? new Set(JSON.parse(raw)) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCalendarTrusts() {
+  localStorage.setItem(CALENDAR_TRUSTS_KEY, JSON.stringify([...calendarSelectedLeis]));
+}
+
+// Only runs once, at startup - a saved selection (even an empty one, from
+// clicking "None") is always honoured as-is from then on; only a browser
+// that has never opened the calendar at all gets the "every currently
+// enabled company" default.
+function initCalendarTrusts() {
+  const saved = loadCalendarTrusts();
+  calendarSelectedLeis = saved || new Set(loadWatchlist().filter(isCompanyEnabled).map((c) => c.lei));
+}
+
+// Same cache (localStorage, keyed by LEI, see loadHistoryCache()/
+// saveHistoryCache() above) the filing history overlay uses, and the same
+// "last 365 days, every category" request shape - a trust already opened in
+// its own history view is very likely already cached here as a result, and
+// vice versa. A failed fetch falls back to whatever's cached (even if
+// stale) rather than showing nothing, and never throws - one bad LEI
+// shouldn't blank out every other selected trust's calendar entries.
+async function fetchCompanyHistoryItems(lei, { force = false } = {}) {
+  const cache = loadHistoryCache();
+  const cached = cache[lei];
+  const now = Date.now();
+  if (!force && cached && now - cached.fetchedAt < HISTORY_CACHE_TTL_MS) return cached.items;
+
+  try {
+    const query = await viewQueryString({ leis: lei, days: '365' });
+    const res = await fetch(`/api/reports?${query}`);
+    const { ok, data } = await parseJsonResponse(res);
+    if (!ok) return cached ? cached.items : [];
+
+    const items = (data.scannedItems || []).slice().sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
+    cache[lei] = { items, fetchedAt: now };
+    saveHistoryCache(cache);
+    return items;
+  } catch {
+    return cached ? cached.items : [];
+  }
+}
+
+async function loadCalendarData() {
+  const statusEl = document.getElementById('calendar-status');
+  const leis = [...calendarSelectedLeis];
+
+  if (leis.length === 0) {
+    calendarItemsByLei = {};
+    calendarDueInfoByLei = {};
+    statusEl.hidden = false;
+    statusEl.textContent = 'No trusts selected - tick at least one on the left.';
+    return;
+  }
+
+  statusEl.hidden = false;
+  statusEl.textContent = 'Loading…';
+  try {
+    const [itemsPerLei, dueResult] = await Promise.all([
+      Promise.all(leis.map((lei) => fetchCompanyHistoryItems(lei))),
+      fetch(`/api/due-dates?leis=${encodeURIComponent(leis.join(','))}`)
+        .then(parseJsonResponse)
+        .catch(() => ({ ok: false, data: {} })),
+    ]);
+
+    calendarItemsByLei = {};
+    leis.forEach((lei, i) => { calendarItemsByLei[lei] = itemsPerLei[i]; });
+    calendarDueInfoByLei = (dueResult.ok && dueResult.data.dueInfo) || {};
+    statusEl.hidden = true;
+  } catch (err) {
+    statusEl.hidden = false;
+    statusEl.textContent = `Failed to load: ${err.message || err}`;
+  }
+}
+
+function calendarDayKey(date) {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+// One entry per (trust, day) - a real filing on the day it published, or an
+// estimated due date (Half-year/Annual only) on the day it's estimated for,
+// whether that's already in the past (overdue) or still ahead. Grouped by
+// day key for O(1) lookup while building the grid below.
+function buildCalendarDayEvents() {
+  const byDay = new Map();
+  const namesByLei = new Map(loadWatchlist().map((c) => [c.lei, c.name || c.lei]));
+
+  const addEvent = (date, event) => {
+    if (!date || Number.isNaN(date.getTime())) return;
+    const key = calendarDayKey(date);
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(event);
+  };
+
+  for (const lei of calendarSelectedLeis) {
+    const name = namesByLei.get(lei) || lei;
+
+    for (const item of calendarItemsByLei[lei] || []) {
+      addEvent(item.publishedAt ? new Date(item.publishedAt) : null, {
+        type: 'filed', lei, name, category: item.type, url: item.url,
+      });
+    }
+
+    const due = calendarDueInfoByLei[lei];
+    if (!due) continue;
+    for (const [key, label] of [['halfYear', 'Half-year Financial Report'], ['annual', 'Annual Financial Report']]) {
+      const entry = due[key];
+      if (entry && entry.dueDate) {
+        addEvent(new Date(entry.dueDate), { type: 'due', lei, name, category: label, status: entry.status });
+      }
+    }
+  }
+  return byDay;
+}
+
+// Renders the currently selected month only - Monday-start (weekday header
+// is static markup in index.html), padded with the trailing days of the
+// previous/next month so every week row is a full 7 days.
+function renderCalendarGrid() {
+  const year = calendarMonth.getFullYear();
+  const month = calendarMonth.getMonth();
+  document.getElementById('calendar-month-label').textContent = calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+  const byDay = buildCalendarDayEvents();
+  const firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7; // Mon=0..Sun=6
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const totalCells = Math.ceil((firstWeekday + daysInMonth) / 7) * 7;
+  const today = new Date();
+
+  const gridEl = document.getElementById('calendar-grid');
+  gridEl.innerHTML = '';
+
+  const maxShown = 3;
+  for (let i = 0; i < totalCells; i++) {
+    const cellDate = new Date(year, month, i - firstWeekday + 1);
+    const inMonth = cellDate.getMonth() === month;
+    const events = byDay.get(calendarDayKey(cellDate)) || [];
+    const shown = events.slice(0, maxShown);
+
+    const cell = document.createElement('div');
+    cell.className = `calendar-cell${inMonth ? '' : ' calendar-cell-out'}${inMonth && cellDate.toDateString() === today.toDateString() ? ' calendar-cell-today' : ''}`;
+    cell.innerHTML = `
+      <span class="calendar-cell-date">${cellDate.getDate()}</span>
+      <div class="calendar-cell-events">
+        ${shown.map((e) => `
+          <button type="button" class="calendar-event" data-lei="${escapeHtml(e.lei)}" data-name="${escapeHtml(e.name)}" title="${escapeHtml(e.name)} - ${escapeHtml(e.category || '')}${e.type === 'due' ? ' (estimated)' : ''}">
+            <span class="calendar-dot calendar-dot-${e.type === 'due' ? 'due' : 'filed'}"></span>${escapeHtml(e.name)}
+          </button>
+        `).join('')}
+        ${events.length > maxShown ? `<span class="calendar-more">+${events.length - maxShown} more</span>` : ''}
+      </div>
+    `;
+    gridEl.appendChild(cell);
+  }
+
+  // Opens that trust's full history, same as clicking a due-dates-overlay
+  // row does - closes this overlay first rather than stacking, since
+  // there's nothing left to do here once you've jumped to one trust's
+  // detail view.
+  gridEl.querySelectorAll('.calendar-event').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.getElementById('calendar-overlay').hidden = true;
+      openHistoryOverlay(btn.dataset.lei, btn.dataset.name);
+    });
+  });
+}
+
+function renderCalendarTrustsList() {
+  const listEl = document.getElementById('calendar-trusts-list');
+  const watchlist = loadWatchlist();
+
+  listEl.innerHTML = '';
+  if (watchlist.length === 0) {
+    listEl.innerHTML = '<li class="hint">Add companies to your watchlist first.</li>';
+    return;
+  }
+
+  for (const company of watchlist) {
+    const li = document.createElement('li');
+    li.className = 'calendar-trust-row';
+    li.innerHTML = `
+      <label>
+        <input type="checkbox" class="calendar-trust-toggle" data-lei="${escapeHtml(company.lei)}" ${calendarSelectedLeis.has(company.lei) ? 'checked' : ''} />
+        ${escapeHtml(company.name || company.lei)}
+      </label>
+    `;
+    listEl.appendChild(li);
+  }
+
+  listEl.querySelectorAll('.calendar-trust-toggle').forEach((checkbox) => {
+    checkbox.addEventListener('change', async () => {
+      if (checkbox.checked) calendarSelectedLeis.add(checkbox.dataset.lei);
+      else calendarSelectedLeis.delete(checkbox.dataset.lei);
+      saveCalendarTrusts();
+      await loadCalendarData();
+      renderCalendarGrid();
+    });
+  });
+}
+
+async function openCalendarOverlay() {
+  document.getElementById('calendar-overlay').hidden = false;
+  renderCalendarTrustsList();
+  await loadCalendarData();
+  renderCalendarGrid();
+}
+
+document.getElementById('calendar-button').addEventListener('click', openCalendarOverlay);
+
+document.getElementById('calendar-close').addEventListener('click', () => {
+  document.getElementById('calendar-overlay').hidden = true;
+});
+
+document.getElementById('calendar-prev').addEventListener('click', () => {
+  calendarMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1);
+  renderCalendarGrid();
+});
+
+document.getElementById('calendar-next').addEventListener('click', () => {
+  calendarMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1);
+  renderCalendarGrid();
+});
+
+document.getElementById('calendar-today').addEventListener('click', () => {
+  calendarMonth = new Date();
+  renderCalendarGrid();
+});
+
+document.getElementById('calendar-trusts-all').addEventListener('click', async () => {
+  calendarSelectedLeis = new Set(loadWatchlist().map((c) => c.lei));
+  saveCalendarTrusts();
+  renderCalendarTrustsList();
+  await loadCalendarData();
+  renderCalendarGrid();
+});
+
+document.getElementById('calendar-trusts-none').addEventListener('click', async () => {
+  calendarSelectedLeis = new Set();
+  saveCalendarTrusts();
+  renderCalendarTrustsList();
+  await loadCalendarData();
+  renderCalendarGrid();
+});
+
 // Reads a fetch Response as JSON, but tolerates a body that isn't valid
 // JSON (a plain-text 404 from a route that doesn't exist - e.g. a dev
 // server running stale code - or an HTML error page from a proxy in front
@@ -2018,6 +2282,7 @@ document.getElementById('notifications-email-add').addEventListener('click', asy
   // the watchlist cache (merging any LEIs from a shared link), so it
   // needs initWatchlist() done first - not the other way around.
   await Promise.all([initWatchlist(), initSeenBackend()]);
+  initCalendarTrusts();
   await adoptUrlParams();
   initSettingsForm();
   initAutoRefreshControl();
