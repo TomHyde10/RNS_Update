@@ -14,6 +14,7 @@
     </div>
     <div class="header-actions">
       <button type="button" id="debug-button" class="diagnostics-button" title="Show every scanned item, for diagnosing a missing report">Diagnostics</button>
+      <button type="button" id="push-toggle" class="diagnostics-button" hidden title="Get a browser notification for new matching reports even when this tab (or browser) is closed">Push: Off</button>
       <label class="theme-toggle" title="Auto-refresh - when on and this tab is in the background, a browser notification pops up for newly-seen reports (needs notification permission)">
         <span aria-hidden="true">⟳</span>
         <select id="auto-refresh-select">
@@ -84,6 +85,21 @@
           </div>
         </form>
       </details>
+
+      <details id="views-manager" class="panel">
+        <summary>Views</summary>
+        <p class="hint">Save the current group/time period/report types/keyword as a named view, so you can switch between e.g. "Income trusts" and "Growth trusts" without re-entering settings each time.</p>
+        <select id="view-select">
+          <option value="">— All (no view) —</option>
+        </select>
+        <input type="text" id="view-name-input" placeholder="View name…" autocomplete="off" />
+        <div class="settings-buttons views-buttons">
+          <button type="button" id="view-save-new">Save as new</button>
+          <button type="button" id="view-update" disabled>Update</button>
+          <button type="button" id="view-delete" disabled>Delete</button>
+        </div>
+        <p id="views-status" class="hint" hidden></p>
+      </details>
     </aside>
 
     <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" tabindex="0"></div>
@@ -108,6 +124,9 @@
       </div>
       <div id="reports-controls">
         <input type="text" id="report-filter" placeholder="Filter by company or title…" autocomplete="off" />
+        <select id="group-filter" title="Filter by sector/portfolio group - set per company in Edit companies">
+          <option value="all">All groups</option>
+        </select>
       </div>
       <div class="reports-table-wrap">
         <table class="reports-table">
@@ -305,6 +324,11 @@
         <ul id="notifications-email-list" class="notifications-email-list"></ul>
 
         <p id="notifications-editing-label" class="hint" hidden></p>
+
+        <div id="notifications-keyword-row" class="notifications-keyword-row" hidden>
+          <label for="notifications-keyword-input">Keyword filter (optional)</label>
+          <input type="text" id="notifications-keyword-input" placeholder="e.g. delisting, merger" autocomplete="off" title="Also notify for any report mentioning this word, regardless of its report type or the trusts selected below" />
+        </div>
 
         <div class="notifications-bulk-row">
           <span class="notifications-bulk-label">Apply to every trust:</span>

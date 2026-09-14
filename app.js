@@ -93,6 +93,12 @@ function saveWatchlist(list) {
   } else {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
   }
+  // Keeps an active push subscription's server-side prefs (see
+  // maybeSyncPushSubscription() further down) matching whichever companies
+  // are actually watched - not awaited, since neither this function nor any
+  // of its many callers (add/rename/toggle/remove/bulk-add/import) should
+  // ever block on a push re-sync.
+  maybeSyncPushSubscription();
 }
 
 // Decides which backend the watchlist lives in and populates the initial
@@ -178,6 +184,10 @@ function loadSettings() {
 
 function saveSettings(settings) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  // Same reasoning as saveWatchlist()'s own call - a push subscription's
+  // categories/keyword should track Search settings, not just the
+  // companies watched.
+  maybeSyncPushSubscription();
 }
 
 // Tracks which reports have already been shown, so a later load can flag
@@ -265,6 +275,35 @@ function loadSort() {
 
 function saveSort(v) {
   localStorage.setItem(SORT_KEY, v);
+}
+
+// Which sector/portfolio group (see setCompanyGroup() above) the main
+// report list is currently filtered to - 'all' (no filter) or one of
+// getGroups()'s values. Persisted like sort/theme, but also the thing a
+// saved "view" (see applyView()) overwrites when you switch views.
+const GROUP_FILTER_KEY = 'rns-group-filter';
+
+function loadGroupFilter() {
+  return localStorage.getItem(GROUP_FILTER_KEY) || 'all';
+}
+
+function saveGroupFilter(v) {
+  localStorage.setItem(GROUP_FILTER_KEY, v || 'all');
+}
+
+// Rebuilds the Group filter dropdown's options from whatever groups
+// currently exist, keeping the current selection if it's still valid
+// (falls back to "All groups" if the selected group was renamed/removed).
+function renderGroupFilterOptions() {
+  const select = document.getElementById('group-filter');
+  if (!select) return;
+  const groups = getGroups();
+  const current = loadGroupFilter();
+  select.innerHTML = '<option value="all">All groups</option>'
+    + '<option value="__ungrouped">Ungrouped</option>'
+    + groups.map((g) => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
+  select.value = current === 'all' || current === '__ungrouped' || groups.includes(current) ? current : 'all';
+  if (select.value !== current) saveGroupFilter(select.value);
 }
 
 function sortReports(reports, sortBy) {
@@ -1051,6 +1090,35 @@ function renameCompany(lei, name) {
   saveWatchlist(watchlist);
 }
 
+// Free-text sector/portfolio tag per company (e.g. "Income trusts",
+// "Client A") - purely a label for filtering the report list and for
+// building watchlist views (see GROUP_FILTER_KEY / views below), not a
+// separate list of companies. A company with no group set (`''`) shows up
+// under "Ungrouped" wherever groups are listed.
+function setCompanyGroup(lei, group) {
+  const watchlist = loadWatchlist();
+  const company = watchlist.find((c) => c.lei === lei);
+  if (!company) return;
+  company.group = group.trim();
+  saveWatchlist(watchlist);
+}
+
+// Every distinct non-empty group currently in use, sorted - drives both the
+// Edit companies datalist (so retyping an existing group name is a matter
+// of autocomplete, not remembering the exact spelling) and the report
+// list's Group filter dropdown.
+function getGroups() {
+  const groups = new Set();
+  for (const c of loadWatchlist()) {
+    if (c.group && c.group.trim()) groups.add(c.group.trim());
+  }
+  return [...groups].sort((a, b) => a.localeCompare(b));
+}
+
+function companyGroupByLei() {
+  return new Map(loadWatchlist().map((c) => [c.lei, (c.group || '').trim()]));
+}
+
 // The Edit companies overlay is the only place the watchlist is shown or
 // managed - one row per company with a checkbox (include/exclude from
 // searches, greyed out when off), an editable name field (renaming wasn't
@@ -1096,6 +1164,16 @@ function renderEditCompanyList() {
     return;
   }
 
+  const groupOptions = getGroups();
+  const groupListId = 'edit-company-group-options';
+  let datalistEl = document.getElementById(groupListId);
+  if (!datalistEl) {
+    datalistEl = document.createElement('datalist');
+    datalistEl.id = groupListId;
+    document.body.appendChild(datalistEl);
+  }
+  datalistEl.innerHTML = groupOptions.map((g) => `<option value="${escapeHtml(g)}"></option>`).join('');
+
   for (const company of watchlist) {
     const enabled = isCompanyEnabled(company);
     const li = document.createElement('li');
@@ -1103,6 +1181,7 @@ function renderEditCompanyList() {
     li.innerHTML = `
       <input type="checkbox" class="edit-company-toggle" data-lei="${escapeHtml(company.lei)}" ${enabled ? 'checked' : ''} aria-label="Include in searches" title="Include in searches" />
       <input type="text" class="edit-company-name" data-lei="${escapeHtml(company.lei)}" placeholder="${escapeHtml(company.lei)}" value="${escapeHtml(company.name || '')}" />
+      <input type="text" class="edit-company-group" data-lei="${escapeHtml(company.lei)}" list="${groupListId}" placeholder="Group…" title="Sector/portfolio group - used to filter the report list and build views" value="${escapeHtml(company.group || '')}" />
       <span class="lei">${escapeHtml(company.lei)}</span>
       <button type="button" class="history-company" data-lei="${escapeHtml(company.lei)}" data-name="${escapeHtml(company.name || company.lei)}" aria-label="Filing history" title="Filing history">&#128337;</button>
       <button type="button" class="remove-company" data-lei="${escapeHtml(company.lei)}" aria-label="Remove">&times;</button>
@@ -1122,6 +1201,14 @@ function renderEditCompanyList() {
     input.addEventListener('change', () => {
       renameCompany(input.dataset.lei, input.value);
       updateReportsCompanyName(input.dataset.lei, input.value);
+    });
+  });
+
+  listEl.querySelectorAll('.edit-company-group').forEach((input) => {
+    input.addEventListener('change', () => {
+      setCompanyGroup(input.dataset.lei, input.value);
+      renderGroupFilterOptions();
+      renderReportsList();
     });
   });
 
@@ -1222,6 +1309,190 @@ function notifyNewReports(newReports, settings) {
   }
 }
 
+// Real Web Push notifications (lib/webPush.js, lib/pushStore.js,
+// lib/sendPush.js, sw.js) - unlike notifyNewReports() above (which only
+// ever fires while this tab is open, via the plain Notification API), this
+// keeps working with the tab or even the whole browser closed, since
+// delivery goes through the browser vendor's own push service and a
+// service worker rather than this page's own JS. One subscription per
+// browser, mirroring whatever companies (loadWatchlist()'s enabled
+// entries) and categories/keyword (loadSettings()) are currently active -
+// kept in sync via maybeSyncPushSubscription(), called from saveWatchlist()
+// and saveSettings() above, rather than offering its own separate
+// company/category picker.
+const PUSH_ENABLED_KEY = 'rns-push-enabled';
+
+// Web Push's applicationServerKey wants the VAPID public key as a raw
+// Uint8Array, not the base64url string /api/push/public-key returns -
+// standard conversion snippet for this (there's no built-in browser API for
+// it).
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+
+function pushSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && typeof Notification !== 'undefined';
+}
+
+let swRegistrationPromise = null;
+function registerServiceWorker() {
+  if (!pushSupported()) return Promise.resolve(null);
+  if (!swRegistrationPromise) {
+    swRegistrationPromise = navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.error('Service worker registration failed:', err);
+      return null;
+    });
+  }
+  return swRegistrationPromise;
+}
+
+// { enabled, publicKey } - `enabled` reflects both halves this deployment
+// needs (DATABASE_URL for storage, VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY for
+// sending - see server.js's GET /api/push/public-key).
+async function fetchPushConfig() {
+  try {
+    const res = await fetch('/api/push/public-key');
+    const { ok, data } = await parseJsonResponse(res);
+    return ok ? { enabled: Boolean(data.enabled), publicKey: data.publicKey || null } : { enabled: false, publicKey: null };
+  } catch {
+    return { enabled: false, publicKey: null };
+  }
+}
+
+// The prefs a push subscription is created/updated with - the current
+// enabled watchlist's LEIs plus the current Search settings' categories/
+// keyword, i.e. "notify for whatever the main report list would currently
+// show". Recomputed fresh every sync rather than editable in its own UI.
+function currentPushPrefs() {
+  const leis = loadWatchlist().filter(isCompanyEnabled).map((c) => c.lei);
+  const settings = loadSettings();
+  return { leis, categories: settings.categories, keyword: settings.keyword };
+}
+
+async function syncPushSubscription(subscription) {
+  const prefs = currentPushPrefs();
+  try {
+    await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subscription: subscription.toJSON(), ...prefs }),
+    });
+  } catch (err) {
+    console.error('Failed to sync push subscription:', err);
+  }
+}
+
+// Called after every watchlist/settings change (see saveWatchlist()/
+// saveSettings() above) - a no-op unless this browser has actually turned
+// push on (PUSH_ENABLED_KEY), and unless a subscription still genuinely
+// exists (it can vanish browser-side without this app ever hearing about
+// it - permission revoked, site data cleared, etc.), in which case the
+// stale local flag is cleared rather than repeatedly trying to sync
+// something that no longer exists.
+async function maybeSyncPushSubscription() {
+  if (localStorage.getItem(PUSH_ENABLED_KEY) !== 'true' || !pushSupported()) return;
+  const registration = await registerServiceWorker();
+  if (!registration) return;
+  const subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    localStorage.removeItem(PUSH_ENABLED_KEY);
+    updatePushToggleButton(false);
+    return;
+  }
+  syncPushSubscription(subscription);
+}
+
+function updatePushToggleButton(enabled) {
+  const btn = document.getElementById('push-toggle');
+  btn.textContent = enabled ? 'Push: On' : 'Push: Off';
+  btn.classList.toggle('is-active', enabled);
+  btn.title = enabled
+    ? 'Push notifications are on for this browser - notifies for whatever the main list currently shows, even with this tab/browser closed. Click to turn off.'
+    : 'Get a browser notification for new matching reports even when this tab (or browser) is closed.';
+}
+
+async function togglePush() {
+  const btn = document.getElementById('push-toggle');
+  btn.disabled = true;
+  try {
+    const registration = await registerServiceWorker();
+    if (!registration) throw new Error('Service worker registration failed.');
+
+    const existing = await registration.pushManager.getSubscription();
+    if (existing) {
+      await fetch('/api/push/subscribe', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: existing.endpoint }),
+      }).catch(() => {});
+      await existing.unsubscribe();
+      localStorage.removeItem(PUSH_ENABLED_KEY);
+      updatePushToggleButton(false);
+      return;
+    }
+
+    if (Notification.permission === 'denied') {
+      alert('Notifications are blocked for this site in your browser settings - allow them to enable push.');
+      return;
+    }
+
+    const { enabled, publicKey } = await fetchPushConfig();
+    if (!enabled || !publicKey) {
+      alert("Push notifications aren't configured on this deployment yet.");
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') return;
+
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    });
+    await syncPushSubscription(subscription);
+    localStorage.setItem(PUSH_ENABLED_KEY, 'true');
+    updatePushToggleButton(true);
+  } catch (err) {
+    console.error('Failed to toggle push notifications:', err);
+    alert(`Couldn't change push notification settings: ${err.message || err}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Shows/hides the header button based on both browser support and this
+// deployment actually offering push (see fetchPushConfig()), and reflects
+// whatever this browser's real subscription state already is (rather than
+// trusting PUSH_ENABLED_KEY blindly, which could be stale - see
+// maybeSyncPushSubscription()'s own staleness handling).
+async function initPushControl() {
+  const btn = document.getElementById('push-toggle');
+  if (!pushSupported()) return;
+
+  const { enabled } = await fetchPushConfig();
+  if (!enabled) return;
+
+  btn.hidden = false;
+  btn.addEventListener('click', togglePush);
+
+  const registration = await registerServiceWorker();
+  if (!registration) return;
+  const subscription = await registration.pushManager.getSubscription();
+  if (subscription) {
+    localStorage.setItem(PUSH_ENABLED_KEY, 'true');
+    updatePushToggleButton(true);
+    syncPushSubscription(subscription); // picks up any watchlist/settings changes made since this browser's last visit
+  } else {
+    localStorage.removeItem(PUSH_ENABLED_KEY);
+    updatePushToggleButton(false);
+  }
+}
+
 function toCsvField(value) {
   const s = String(value == null ? '' : value);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -1314,10 +1585,18 @@ function renderReportsList() {
   }
 
   const filterText = filterInput.value.trim().toLowerCase();
+  const groupFilter = loadGroupFilter();
+  const groupByLei = companyGroupByLei();
 
   let visible = lastReports.filter(
     (r) => !filterText || r.company.toLowerCase().includes(filterText) || r.title.toLowerCase().includes(filterText)
   );
+  if (groupFilter !== 'all') {
+    visible = visible.filter((r) => {
+      const group = groupByLei.get(r.lei) || '';
+      return groupFilter === '__ungrouped' ? !group : group === groupFilter;
+    });
+  }
   visible = sortReports(visible, sortSelect.value);
 
   listEl.innerHTML = '';
@@ -1600,6 +1879,7 @@ async function loadReports() {
 
     document.getElementById('mark-seen').hidden = lastNewKeys.size === 0;
 
+    renderGroupFilterOptions();
     renderReportsList();
 
     saveSeen(resolvedReports.map(reportKey), seenBefore);
@@ -1897,6 +2177,10 @@ document.getElementById('sort-select').addEventListener('change', () => {
   saveSort(document.getElementById('sort-select').value);
   renderReportsList();
 });
+document.getElementById('group-filter').addEventListener('change', () => {
+  saveGroupFilter(document.getElementById('group-filter').value);
+  renderReportsList();
+});
 
 function setupAutoRefresh(settings) {
   if (autoRefreshTimer) {
@@ -1907,21 +2191,28 @@ function setupAutoRefresh(settings) {
   autoRefreshTimer = setInterval(loadReports, settings.autoRefreshMinutes * 60 * 1000);
 }
 
-function initSettingsForm() {
-  const daysSelect = document.getElementById('days-select');
-  const categoriesOtherInput = document.getElementById('categories-other-input');
-  const keywordInput = document.getElementById('keyword-input');
-  const settings = loadSettings();
-
-  daysSelect.value = String(settings.days);
-  keywordInput.value = settings.keyword;
+// Populates the Search settings form's fields from `settings` (without
+// touching autoRefreshMinutes, which lives in its own header control) -
+// pulled out of initSettingsForm() so applyViewSnapshot() below can reuse
+// it when switching views, without re-binding the form's submit listener a
+// second time.
+function populateSettingsForm(settings) {
+  document.getElementById('days-select').value = String(settings.days);
+  document.getElementById('keyword-input').value = settings.keyword;
 
   const knownLower = new Set(KNOWN_CATEGORIES.map((c) => c.toLowerCase()));
   for (const value of KNOWN_CATEGORIES) {
     const checkbox = document.querySelector(`#categories-fieldset input[value="${CSS.escape(value)}"]`);
     if (checkbox) checkbox.checked = settings.categories.some((c) => c.toLowerCase() === value.toLowerCase());
   }
-  categoriesOtherInput.value = settings.categories.filter((c) => !knownLower.has(c.toLowerCase())).join(', ');
+  document.getElementById('categories-other-input').value = settings.categories.filter((c) => !knownLower.has(c.toLowerCase())).join(', ');
+}
+
+function initSettingsForm() {
+  const daysSelect = document.getElementById('days-select');
+  const categoriesOtherInput = document.getElementById('categories-other-input');
+  const keywordInput = document.getElementById('keyword-input');
+  populateSettingsForm(loadSettings());
 
   function gatherCategories() {
     const checked = [...document.querySelectorAll('#categories-fieldset input:checked')].map((el) => el.value);
@@ -1969,6 +2260,133 @@ function initAutoRefreshControl() {
 
 function initReportControls() {
   document.getElementById('sort-select').value = loadSort();
+}
+
+// Multiple watchlist views: a saved view is just a named snapshot of
+// {groupFilter, days, categories, keyword} - not a separate list of
+// companies. Switching views re-filters the one shared, tagged watchlist
+// (see setCompanyGroup()/getGroups() above) rather than duplicating company
+// entries across views, so renaming a company or moving it between groups
+// is a single edit that every view relying on that group immediately
+// reflects. Entirely client-side (localStorage), like settings/sort/theme -
+// no server round trip, and per-browser like the rest of those.
+const VIEWS_KEY = 'rns-views';
+const ACTIVE_VIEW_KEY = 'rns-active-view';
+
+function loadViews() {
+  try {
+    const raw = localStorage.getItem(VIEWS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveViews(views) {
+  localStorage.setItem(VIEWS_KEY, JSON.stringify(views));
+}
+
+function loadActiveViewId() {
+  return localStorage.getItem(ACTIVE_VIEW_KEY) || '';
+}
+
+function saveActiveViewId(id) {
+  if (id) localStorage.setItem(ACTIVE_VIEW_KEY, id);
+  else localStorage.removeItem(ACTIVE_VIEW_KEY);
+}
+
+function currentViewSnapshot() {
+  const settings = loadSettings();
+  return { days: settings.days, categories: settings.categories, keyword: settings.keyword, groupFilter: loadGroupFilter() };
+}
+
+// Applies a saved view's snapshot to the actual settings/group-filter
+// storage the report list reads from, and reflects it back into the
+// visible form controls - the same three things loadReports() itself
+// already depends on, so no other code needs to know a "view" exists.
+function applyViewSnapshot(snapshot) {
+  const settings = loadSettings();
+  saveSettings({ ...settings, days: snapshot.days, categories: snapshot.categories, keyword: snapshot.keyword });
+  saveGroupFilter(snapshot.groupFilter || 'all');
+  populateSettingsForm(loadSettings());
+  renderGroupFilterOptions();
+}
+
+function showViewsStatus(message) {
+  const el = document.getElementById('views-status');
+  el.hidden = !message;
+  el.textContent = message || '';
+}
+
+function renderViewSelect() {
+  const select = document.getElementById('view-select');
+  const views = loadViews();
+  const activeId = loadActiveViewId();
+  select.innerHTML = '<option value="">— All (no view) —</option>'
+    + views.map((v) => `<option value="${escapeHtml(v.id)}">${escapeHtml(v.name)}</option>`).join('');
+  select.value = views.some((v) => v.id === activeId) ? activeId : '';
+  if (select.value !== activeId) saveActiveViewId(select.value);
+
+  const hasSelection = Boolean(select.value);
+  document.getElementById('view-update').disabled = !hasSelection;
+  document.getElementById('view-delete').disabled = !hasSelection;
+  document.getElementById('view-name-input').value = hasSelection
+    ? (views.find((v) => v.id === select.value) || {}).name || ''
+    : '';
+}
+
+function initViewsPanel() {
+  renderViewSelect();
+
+  document.getElementById('view-select').addEventListener('change', (e) => {
+    const id = e.target.value;
+    saveActiveViewId(id);
+    const view = loadViews().find((v) => v.id === id);
+    renderViewSelect();
+    showViewsStatus('');
+    if (view) applyViewSnapshot(view);
+    else { saveGroupFilter('all'); renderGroupFilterOptions(); }
+    loadReports();
+  });
+
+  document.getElementById('view-save-new').addEventListener('click', () => {
+    const name = document.getElementById('view-name-input').value.trim();
+    if (!name) {
+      showViewsStatus('Give the view a name first.');
+      return;
+    }
+    const views = loadViews();
+    const view = { id: `v${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name, ...currentViewSnapshot() };
+    views.push(view);
+    saveViews(views);
+    saveActiveViewId(view.id);
+    renderViewSelect();
+    showViewsStatus(`Saved "${name}".`);
+  });
+
+  document.getElementById('view-update').addEventListener('click', () => {
+    const id = loadActiveViewId();
+    const views = loadViews();
+    const view = views.find((v) => v.id === id);
+    if (!view) return;
+    const name = document.getElementById('view-name-input').value.trim() || view.name;
+    Object.assign(view, { name, ...currentViewSnapshot() });
+    saveViews(views);
+    renderViewSelect();
+    showViewsStatus(`Updated "${name}".`);
+  });
+
+  document.getElementById('view-delete').addEventListener('click', () => {
+    const id = loadActiveViewId();
+    const views = loadViews();
+    const view = views.find((v) => v.id === id);
+    if (!view) return;
+    saveViews(views.filter((v) => v.id !== id));
+    saveActiveViewId('');
+    renderViewSelect();
+    showViewsStatus(`Deleted "${view.name}".`);
+  });
 }
 
 // Automatic email digests: unlike the ad-hoc "Send Notification" flow above
@@ -2358,10 +2776,12 @@ function renderNotificationsOverlay() {
 
   const editingLabel = document.getElementById('notifications-editing-label');
   const matrixBody = document.getElementById('notifications-matrix-body');
+  const keywordRow = document.getElementById('notifications-keyword-row');
 
   const subscription = currentSubscription();
   if (!subscription) {
     editingLabel.hidden = true;
+    keywordRow.hidden = true;
     matrixBody.innerHTML = '<li class="empty">Add an email above to configure its notifications.</li>';
     document.querySelectorAll('.notifications-bulk-chip').forEach((chip) => {
       chip.classList.remove('is-active');
@@ -2372,6 +2792,8 @@ function renderNotificationsOverlay() {
 
   editingLabel.hidden = false;
   editingLabel.textContent = `Configuring notifications for ${subscription.email}`;
+  keywordRow.hidden = false;
+  document.getElementById('notifications-keyword-input').value = subscription.keyword || '';
   renderNotificationsMatrix(subscription);
 }
 
@@ -2382,7 +2804,7 @@ async function saveCurrentSubscription() {
     const res = await fetch(`/api/subscriptions/${encodeURIComponent(subscription.id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scheduleType: subscription.scheduleType, sendTimeUtc: subscription.sendTimeUtc, prefs: subscription.prefs }),
+      body: JSON.stringify({ scheduleType: subscription.scheduleType, sendTimeUtc: subscription.sendTimeUtc, prefs: subscription.prefs, keyword: subscription.keyword }),
     });
     const { ok, status, data } = await parseJsonResponse(res);
     if (!ok) throw new Error(data.error || `Couldn't save (${status})`);
@@ -2449,6 +2871,13 @@ document.getElementById('notifications-select-all').addEventListener('click', (e
   setAllCategoriesForAllTrusts(!e.currentTarget.classList.contains('is-active'));
 });
 
+document.getElementById('notifications-keyword-input').addEventListener('change', (e) => {
+  const subscription = currentSubscription();
+  if (!subscription) return;
+  subscription.keyword = e.target.value.trim();
+  saveCurrentSubscription();
+});
+
 document.getElementById('notifications-email-add').addEventListener('click', async () => {
   const input = document.getElementById('notifications-new-email');
   const email = input.value.trim();
@@ -2493,7 +2922,9 @@ document.getElementById('notifications-email-add').addEventListener('click', asy
   initSettingsForm();
   initAutoRefreshControl();
   initReportControls();
+  initViewsPanel();
   await loadReports();
+  initPushControl(); // not awaited - a background enhancement, not something the initial report load should wait on
   if (urlViewError) {
     const statusEl = document.getElementById('status');
     statusEl.textContent = `${urlViewError} ${statusEl.textContent}`;

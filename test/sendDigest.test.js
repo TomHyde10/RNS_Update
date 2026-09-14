@@ -141,6 +141,37 @@ describe('filterDigestReports', () => {
   });
 });
 
+describe('filterDigestReports with a keyword', () => {
+  const since = new Date('2026-01-01T00:00:00Z');
+  const prefs = { LEI1: { name: 'Company One', categories: ['Half-year Financial Report'] } };
+
+  it('keeps a report matching the keyword even for a category not selected for that LEI', () => {
+    const reports = [{ lei: 'LEI1', category: 'Miscellaneous', title: 'Notice of delisting', publishedAt: '2026-01-02T00:00:00Z' }];
+    assert.equal(filterDigestReports(reports, prefs, since, 'delisting').length, 1);
+  });
+
+  it('still requires the LEI to be present in prefs at all - keyword is not a bypass for that', () => {
+    const reports = [{ lei: 'UNKNOWN', category: 'Miscellaneous', title: 'Notice of delisting', publishedAt: '2026-01-02T00:00:00Z' }];
+    assert.equal(filterDigestReports(reports, prefs, since, 'delisting').length, 0);
+  });
+
+  it('matches the keyword case-insensitively against the title', () => {
+    const reports = [{ lei: 'LEI1', category: 'Miscellaneous', title: 'DELISTING notice', publishedAt: '2026-01-02T00:00:00Z' }];
+    assert.equal(filterDigestReports(reports, prefs, since, 'delisting').length, 1);
+  });
+
+  it('an empty/missing keyword falls back to category-only matching, same as before', () => {
+    const reports = [{ lei: 'LEI1', category: 'Miscellaneous', title: 'Notice of delisting', publishedAt: '2026-01-02T00:00:00Z' }];
+    assert.equal(filterDigestReports(reports, prefs, since, '').length, 0);
+    assert.equal(filterDigestReports(reports, prefs, since).length, 0);
+  });
+
+  it('a category match still works normally alongside an unrelated keyword', () => {
+    const reports = [{ lei: 'LEI1', category: 'Half-year Financial Report', title: 'Interim results', publishedAt: '2026-01-02T00:00:00Z' }];
+    assert.equal(filterDigestReports(reports, prefs, since, 'delisting').length, 1);
+  });
+});
+
 describe('buildDigestHtml', () => {
   const prefs = { LEI1: { name: 'Company One', categories: [] } };
 

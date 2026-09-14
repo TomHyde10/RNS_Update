@@ -102,6 +102,18 @@ hitting the API directly).
   list even if it names totally different companies.
 - **Per-report email notification**: a "Send Notification" button on each
   report emails a summary of it on click — see "Email notifications" below.
+- **Sector/portfolio grouping**: tag each company with a free-text group
+  (e.g. "Income trusts", "Client A") in Edit companies, then filter the main
+  report list to one group via the "Group" dropdown above it — see "Sector/
+  portfolio grouping and watchlist views" below.
+- **Multiple watchlist views**: save the current group filter, time period,
+  report types, and keyword as a named "view" (Views panel in the sidebar),
+  and switch between saved views instead of re-entering settings each time —
+  see the same section below.
+- **Real push notifications**: a "Push" button in the header turns on
+  browser/OS push notifications for this browser — unlike auto-refresh's
+  in-tab notifications, these keep arriving with the tab (or the whole
+  browser) closed. See "Push notifications" below.
 
 ### Why LEI, not ISIN or ticker
 
@@ -110,6 +122,38 @@ Entity Identifier, a 20-character code) and company name, confirmed from a
 real search export. Add a company via the main form using its LEI (look one
 up at [search.gleif.org](https://search.gleif.org/) if you only know its
 ISIN or name).
+
+### Sector/portfolio grouping and watchlist views
+
+Each company can be tagged with a free-text **group** (e.g. "Income
+trusts", "Client A", "Growth") from the Edit companies overlay — a plain
+text field next to its name, with autocomplete against groups already in
+use so retyping one is a matter of picking it from the list rather than
+remembering the exact spelling. A company with no group set shows up under
+"Ungrouped" wherever groups are listed. This is purely a label on the one
+shared watchlist, not a separate list of companies — renaming a company or
+moving it between groups is a single edit, immediately reflected wherever
+that group is used.
+
+The main report list's **Group** dropdown (next to the text filter above
+the table) filters to one group (or "Ungrouped", or "All groups") — purely
+client-side over whatever's already loaded, the same way the text filter
+works.
+
+**Views** (the "Views" panel in the sidebar, below Search settings) are
+named, saved combinations of **group filter + time period + report types +
+keyword** — not a separate company list. Save the current combination as a
+new view, switch between saved views from the dropdown, update a view's
+saved settings to match whatever's currently applied, or delete one.
+Selecting a view applies its settings and reloads the report list; picking
+"— All (no view) —" goes back to whatever the group filter/Search
+settings/keyword are set to directly. Views live in this browser's
+`localStorage` only (like Search settings/theme/sort), the same as every
+other per-browser preference in this app — they are not shared across
+browsers/devices even when the watchlist itself is (`DATABASE_URL` set),
+and they reference groups by name, so renaming or deleting the only group a
+view filters to leaves that view matching nothing until it's pointed at a
+different group.
 
 ### Email notifications
 
@@ -199,8 +243,14 @@ just the Resend account's own signup email.
 The **Notifications** button (top-left, next to the title) opens a
 subscription manager, independent of the manual Send Notification flow
 above: each email address gets its own schedule (paused / daily / monthly /
-as they occur) and its own matrix of which trusts, and which report types
-per trust, it should be notified about.
+as they occur), its own matrix of which trusts, and which report types per
+trust, it should be notified about, and an optional **keyword filter**
+(e.g. "delisting", "merger") — a filing mentioning that word is included in
+the digest even for a company/report-type combination the matrix hasn't
+otherwise selected, the same "OR'd with the category match" relationship
+the main report list's own Keyword field has (`lib/fetchReports.js`'s
+`matchesKeyword`). Leave it blank for category/trust matching only, as
+before.
 
 - **Daily** and **monthly** send one collated email — everything that
   matched since the last send — at a GMT time of day you choose per
@@ -245,6 +295,60 @@ Render/Northflank/local (where
 functions are serverless with nothing to run a background loop, so
 automatic digests don't fire there without separately configuring Vercel
 Cron to hit a due-check endpoint (not currently wired up).
+
+## Push notifications
+
+The **Push** button in the header (next to Diagnostics) turns on real
+browser/OS push notifications for that browser — the actual fix for the
+limitation the rest of this README calls out repeatedly: auto-refresh's
+own in-tab notifications (`notifyNewReports()` in `app.js`) only fire while
+that tab is open, because they're the plain `Notification` API with
+nothing behind them once the tab or browser closes. Push instead goes
+through a service worker (`sw.js`) and the browser vendor's own push
+service (the same mechanism most installed web apps use for notifications),
+so it keeps working with this site closed entirely — the only feature in
+this app that does.
+
+- **What it notifies for**: whichever companies are currently enabled in
+  your watchlist, and the current Search settings' report types/keyword —
+  the same criteria the main report list itself uses, not a separate
+  picker. Turning Push on takes a snapshot of those; adding/removing a
+  company, or changing categories/keyword and hitting Apply, re-syncs an
+  already-active subscription automatically (`maybeSyncPushSubscription()`
+  in `app.js`) so it doesn't quietly fall out of date. It does **not**
+  follow the Group filter or a saved view — those affect what the *page*
+  displays, not what's pushed.
+- **Setup**: needs `DATABASE_URL` (subscriptions are stored in Postgres,
+  the same database as automatic email digests — see "Persistent cache
+  (Postgres)"/"Automatic email digests" above) plus a VAPID key pair
+  (`VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`), which identifies this
+  deployment to push services so they know a delivery genuinely came from
+  it. Generate one with:
+  ```
+  npx web-push generate-vapid-keys
+  ```
+  and set both as environment variables (or secret files — see "Secret
+  files instead of secret variables" below). Optionally also set
+  `VAPID_SUBJECT` to a `mailto:`/`https:` URI a push service could use to
+  reach this deployment's operator (required by the VAPID spec, never shown
+  to a subscriber) — defaults to a placeholder if unset. Without both keys
+  set, the Push button never appears, same "missing config just disables
+  the feature" pattern as email notifications.
+- **How it's checked**: `server.js`'s existing digest-scheduler loop
+  (`lib/digestScheduler.js`'s `runDuePush()`) checks every push
+  subscription on the same tick as due email digests — unlike email, a
+  push subscription has no schedule of its own to be "due" against, so
+  every one is checked every tick, and any push subscription existing at
+  all forces the loop's fastest cadence (the same one "as they occur" email
+  subscriptions already use). Only relevant on Render/Northflank/local
+  (`server.js` staying alive between requests) — like automatic email
+  digests, this does not run on Vercel's serverless `api/*.js` functions
+  without separately configuring Vercel Cron.
+- **A subscription that goes stale** (permission revoked, browser site data
+  cleared, the underlying push endpoint expired) is detected the next time
+  a push actually fails to deliver with a 404/410 from the push service
+  (`lib/webPush.js`'s `sendPush()`) and removed from the database
+  automatically (`runDuePush()`), rather than retried forever.
 
 ## Authentication
 
@@ -337,7 +441,12 @@ Render dashboard, **New → Blueprint**, point it at this repo. It builds with
 `server.js` already reads. No environment variables required for the base
 app — the Blueprint prompts for `RESEND_API_KEY`/`NOTIFY_EMAIL_FROM` (see
 "Email notifications" above) only if you want the optional "Send
-Notification" button to work; leave them unset otherwise.
+Notification" button to work, and for `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`
+(see "Push notifications" above) only if you want the optional "Push"
+button to work; leave any/all of them unset otherwise. `DATABASE_URL` is
+already wired automatically from the Blueprint's own database, so the
+shared watchlist, automatic email digests, and push notifications all use
+the same one.
 
 Without the blueprint, the same result comes from **New → Web Service** →
 connect the repo → Build Command `npm install`, Start Command `npm start`.
@@ -368,8 +477,10 @@ so it works the same way here: no serverless function support needed,
 4. No environment variables are required for the base app either way. Add
    `RESEND_API_KEY`/`NOTIFY_EMAIL_FROM` (service → Environment) if you want
    the optional "Send Notification" button to work — see "Email
-   notifications" above; Northflank has no blueprint file to pre-fill these
-   like Render's, so set both yourself.
+   notifications" above; add `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` if you
+   want the optional "Push" button to work — see "Push notifications"
+   above; Northflank has no blueprint file to pre-fill any of these like
+   Render's, so set them yourself.
 
 ### Secret files instead of secret variables
 
@@ -377,7 +488,8 @@ Some Northflank plans/projects only offer **Secret Files** (mount a file
 into the container), not individual **Secret Variables**. `server.js`
 handles this itself: for `RESEND_API_KEY`, `NOTIFY_EMAIL_FROM`,
 `NOTIFY_EMAIL_TO`, `DATABASE_URL`, `DATABASE_SSL_CA`, `APP_USERNAME`,
-`APP_PASSWORD`, and `VIEW_TOKEN_SECRET`, if the real environment variable
+`APP_PASSWORD`, `VIEW_TOKEN_SECRET`, `VAPID_PUBLIC_KEY`,
+`VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT`, if the real environment variable
 isn't set, it falls back to reading a file named exactly after that
 variable under `/etc/secrets` (e.g. `/etc/secrets/RESEND_API_KEY`) and uses
 its trimmed contents as the value — no environment variable needed at all.
@@ -548,11 +660,45 @@ overrides both settings.
   `isin` field instead of `lei`) is silently dropped on load rather than
   migrated, since there's no way to derive an LEI from an old ISIN entry
   automatically — see `loadWatchlist()` in `app.js`.
-- **Auto-refresh and its notifications only run while the tab is open** —
-  there's no service worker/push subscription behind this, so closing the
-  tab or browser stops both the polling and any further notifications. This
-  is a deliberate simplicity tradeoff; the RSS feed above is the option that
-  keeps working when the tab isn't open.
+- **Auto-refresh's own in-tab notifications only run while the tab is
+  open** — that polling loop and its plain-`Notification` popups stop the
+  moment the tab or browser closes. Three alternatives that don't: the RSS
+  feed and the filing calendar's `.ics` feed (both poll on the *reader's*
+  own schedule, not this app's), and the "Push" button (see "Push
+  notifications" above), which is the one option actually delivered by
+  this app itself with nothing open — the other two are also unaffected by
+  the deployment-specific caveats below, since a feed reader/calendar app
+  keeps polling regardless of what this deployment has configured.
+- **Push notifications need both a database and a VAPID key pair
+  configured** (see "Push notifications") — without either, the Push
+  button never appears rather than failing when clicked. Like automatic
+  email digests, the scheduler that actually checks and sends pushes only
+  runs on Render/Northflank/local (`server.js` staying alive between
+  requests), not on Vercel's serverless functions without separately
+  configuring Vercel Cron. A push subscription is also tied to one specific
+  browser profile/installation — clearing that browser's site data (or the
+  OS revoking notification permission) silently ends delivery until Push is
+  turned on again there; there's no cross-device sync of push subscriptions
+  the way the shared watchlist has.
+- **A push subscription mirrors your enabled watchlist and Search
+  settings, not the Group filter or a saved view** — turning Push on
+  notifies for whatever the *unfiltered* active watchlist and current
+  report types/keyword would show, kept in sync automatically as those
+  change (see "Push notifications"), but narrowing the on-screen list to
+  one group or view doesn't narrow what gets pushed.
+- **Sector/portfolio groups and watchlist views are both per-browser**,
+  even when the watchlist itself is shared across visitors
+  (`DATABASE_URL` set — see "The user's actual, editable watchlist" in
+  Project layout below): a company's `group` tag *is* stored server-side
+  alongside the rest of that shared row (`lib/watchlistStore.js`) and so is
+  visible to every visitor, but **views themselves live only in
+  `localStorage`** (see "Sector/portfolio grouping and watchlist views"
+  above) — one browser's saved views are invisible to another browser/
+  device, even one pointed at the same shared watchlist.
+- **The keyword digest filter matches only the filing's title** (NSM's
+  `headline` field, via `lib/fetchReports.js`'s `normalise()`), the same
+  as the main report list's own Keyword field — not the linked document's
+  full text, which this app never downloads or parses.
 - The "seen reports" set behind the NEW badge is capped at the most recent
   1000 entries (`MAX_SEEN` in `app.js`) and lives in that browser's
   `localStorage` — clearing site data resets it, which just means the next
@@ -569,13 +715,18 @@ npm test
 ```
 
 Runs `node --test test/` (Node's built-in test runner - no extra dependency
-needed). Covers the automatic email digest system end to end:
+needed). Covers the automatic email digest system end to end, including the
+push-notification scheduler added alongside it (both share
+`lib/digestScheduler.js`'s check loop):
 
-- `test/digestScheduler.test.js` - the due-check/send loop (`lib/digestScheduler.js`),
+- `test/digestScheduler.test.js` - the due-check/send loop for both email
+  (`runDueDigests`) and push (`runDuePush`), plus the poll-interval logic
+  (`computePollIntervalMinutes`, including its `hasPush` branch), all
   against a fake in-memory store and a fake sender. No network, no database.
 - `test/sendDigest.test.js` - digest-window calculation, per-trust/per-category
-  matching, HTML building, and the recipient security gate (`digestSendAllowed`),
-  all pure functions in `lib/sendDigest.js`.
+  matching (including the keyword-filter OR-relationship added for keyword
+  digest alerts), HTML building, and the recipient security gate
+  (`digestSendAllowed`), all pure functions in `lib/sendDigest.js`.
 - `test/subscriptionsApi.test.js` - the real `/api/subscriptions*` routes in
   `server.js`, hit as real HTTP requests against a real (in-process) server -
   only `lib/subscriptionStore.js` is swapped for an in-memory fake, so this
@@ -594,7 +745,12 @@ needed). Covers the automatic email digest system end to end:
 
 Nothing else in the app (the NSM integration, the frontend, CSV/RSS export,
 manual "Send Notification") has automated coverage yet - this suite is
-scoped specifically to the recurring-digest system.
+scoped specifically to the recurring-digest and push-notification systems.
+`lib/pushStore.js`'s real Postgres CRUD and `lib/webPush.js`'s actual
+delivery through a push service have no automated test of their own (the
+same "first real deploy/click is the real test" caveat as elsewhere in this
+README applies) - only the pure scheduling/filtering logic around them is
+covered here.
 
 ## Project layout
 
@@ -611,8 +767,30 @@ lib/cacheStore.js               Optional Postgres-backed NSM cache (used when DA
 lib/buildFeed.js                Builds the RSS 2.0 XML for /api/feed (shared by api/ and server.js)
 lib/sendNotification.js         Email sending via the Resend API (shared by api/ and server.js)
 lib/basicAuth.js                HTTP Basic Auth check used by server.js (see "Authentication") - Vercel's middleware.js re-implements the same check separately
+lib/watchlistStore.js           Postgres-backed shared company watchlist (DATABASE_URL) - now also stores each company's group tag
+lib/subscriptionStore.js        Postgres-backed automatic email digest subscriptions - now also stores each subscription's keyword filter
+lib/sendDigest.js               Builds/sends one email digest (category + keyword matching, HTML) - server.js only
+lib/digestScheduler.js          Due-check/send loop for both email digests (runDueDigests) and push (runDuePush) - server.js only
+lib/pushStore.js                Postgres-backed Web Push subscriptions (DATABASE_URL) - server.js only, no in-memory fallback (see "Push notifications")
+lib/webPush.js                  Thin VAPID/web-push wrapper - sends one push notification, server.js only
+lib/sendPush.js                 Checks one push subscription's watched companies/categories/keyword for anything new and sends a push if so
+sw.js                            Service worker behind Web Push - handles 'push'/'notificationclick', nothing else (no offline caching)
 middleware.js                   Vercel Edge Middleware - the Vercel-side half of "Authentication", gates every route before it reaches api/ or the static files
-server.js                       Plain Node dev server (static files + /api/reports + /api/watchlist + /api/feed + /api/notify + /api/view)
+server.js                       Plain Node dev server (static files + /api/reports + /api/watchlist + /api/feed + /api/notify + /api/view + /api/companies + /api/subscriptions + /api/push/*)
 config/watchlist.js             Default company list - seeds a fresh browser, and fallback for /api/reports called with no `leis` param
 Dockerfile, .dockerignore       Fallback build path for Northflank (or anywhere else that wants a container) - see "Deploying (Northflank)"
 ```
+
+Note: `/api/companies`, `/api/subscriptions*`, `/api/due-dates`,
+`/api/calendar.ics`, and `/api/push/*` (sector/portfolio groups, automatic
+email digests + keyword filter, filing due dates, the `.ics` calendar feed,
+and push notifications respectively) only exist on `server.js` - unlike
+`/api/reports`/`/api/feed`/`/api/notify`/`/api/view`, there is no matching
+`api/*.js` file for a Vercel serverless deployment, since each needs either
+a persistent database connection lifecycle or (push/digests) a long-running
+process to schedule checks from, neither of which fits Vercel's per-request
+serverless functions. A Vercel deployment still gets the core report list,
+RSS feed, manual "Send Notification", and encrypted view links - just not
+the shared watchlist, automatic digests, or push notifications. Multiple
+watchlist views are unaffected either way, since they're entirely
+client-side (`localStorage`, no API route at all).

@@ -3,7 +3,7 @@
 // fake sender instead of real Postgres/Resend/timers.
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { isDue, runDueDigests, computePollIntervalMinutes, MIN_POLL_INTERVAL_MINUTES, DEFAULT_POLL_INTERVAL_MINUTES } = require('../lib/digestScheduler');
+const { isDue, runDueDigests, runDuePush, computePollIntervalMinutes, MIN_POLL_INTERVAL_MINUTES, DEFAULT_POLL_INTERVAL_MINUTES } = require('../lib/digestScheduler');
 
 describe('isDue', () => {
   it('is never due when paused, even if never sent', () => {
@@ -91,6 +91,19 @@ describe('computePollIntervalMinutes', () => {
   it('ignores paused subscriptions when deciding whether anything is active', () => {
     const subs = [{ scheduleType: 'paused' }, { scheduleType: 'daily' }];
     assert.equal(computePollIntervalMinutes(subs), DEFAULT_POLL_INTERVAL_MINUTES);
+  });
+
+  it('polls at the minimum floor when hasPush is true, even with no email subscriptions at all', () => {
+    assert.equal(computePollIntervalMinutes([], true), MIN_POLL_INTERVAL_MINUTES);
+  });
+
+  it('polls at the minimum floor when hasPush is true, even if every email subscription is paused', () => {
+    const subs = [{ scheduleType: 'paused' }];
+    assert.equal(computePollIntervalMinutes(subs, true), MIN_POLL_INTERVAL_MINUTES);
+  });
+
+  it('defaults hasPush to false, keeping existing callers unaffected', () => {
+    assert.equal(computePollIntervalMinutes([]), DEFAULT_POLL_INTERVAL_MINUTES);
   });
 });
 
@@ -192,5 +205,104 @@ describe('runDueDigests', () => {
     assert.equal(result.sent, 1);
     assert.equal(errors.length, 1);
     assert.equal(store.rows.find((r) => r.id === 'fails').lastSentAt, null);
+  });
+});
+
+describe('runDuePush', () => {
+  function makePushStore(subscriptions) {
+    let rows = subscriptions.map((s) => ({ ...s }));
+    return {
+      enabled: true,
+      listPushSubscriptions: async () => rows.map((r) => ({ ...r })),
+      markPushChecked: async (endpoint, checkedAt) => {
+        const row = rows.find((r) => r.endpoint === endpoint);
+        if (row) row.lastCheckedAt = checkedAt.toISOString();
+      },
+      deletePushSubscription: async (endpoint) => {
+        rows = rows.filter((r) => r.endpoint !== endpoint);
+      },
+      get rows() { return rows; },
+    };
+  }
+  const noopLog = () => {};
+
+  it('does nothing when the store is disabled', async () => {
+    const store = makePushStore([{ endpoint: 'e1', lastCheckedAt: null }]);
+    store.enabled = false;
+    let calls = 0;
+    const result = await runDuePush({
+      pushStore: store,
+      sendPushForSubscription: async () => { calls++; return { sent: 1 }; },
+      log: noopLog,
+      logError: noopLog,
+    });
+    assert.equal(calls, 0);
+    assert.deepEqual(result, { checked: 0, sent: 0 });
+  });
+
+  it('checks every subscription unconditionally (no per-subscription schedule) and advances lastCheckedAt', async () => {
+    const now = new Date('2026-01-02T12:00:00Z');
+    const store = makePushStore([{ endpoint: 'e1', lastCheckedAt: null }, { endpoint: 'e2', lastCheckedAt: null }]);
+    const checked = [];
+    const result = await runDuePush({
+      pushStore: store,
+      sendPushForSubscription: async (sub) => { checked.push(sub.endpoint); return { sent: 0 }; },
+      now: () => now,
+      log: noopLog,
+      logError: noopLog,
+    });
+    assert.deepEqual(checked.sort(), ['e1', 'e2']);
+    assert.equal(result.checked, 2);
+    assert.equal(result.sent, 0);
+    assert.equal(store.rows.find((r) => r.endpoint === 'e1').lastCheckedAt, now.toISOString());
+  });
+
+  it('counts a subscription as sent only when something actually matched', async () => {
+    const now = new Date('2026-01-02T12:00:00Z');
+    const store = makePushStore([{ endpoint: 'e1', lastCheckedAt: null }]);
+    const result = await runDuePush({
+      pushStore: store,
+      sendPushForSubscription: async () => ({ sent: 2 }),
+      now: () => now,
+      log: noopLog,
+      logError: noopLog,
+    });
+    assert.equal(result.sent, 1);
+  });
+
+  it('deletes a subscription the push service reports as gone, without marking it checked', async () => {
+    const now = new Date('2026-01-02T12:00:00Z');
+    const store = makePushStore([{ endpoint: 'e1', lastCheckedAt: null }]);
+    const result = await runDuePush({
+      pushStore: store,
+      sendPushForSubscription: async () => ({ sent: 0, gone: true }),
+      now: () => now,
+      log: noopLog,
+      logError: noopLog,
+    });
+    assert.equal(store.rows.length, 0);
+    assert.equal(result.sent, 0);
+  });
+
+  it('keeps going after one subscription fails, without marking it checked', async () => {
+    const now = new Date('2026-01-02T12:00:00Z');
+    const store = makePushStore([{ endpoint: 'fails', lastCheckedAt: null }, { endpoint: 'ok', lastCheckedAt: null }]);
+    const checked = [];
+    const errors = [];
+    const result = await runDuePush({
+      pushStore: store,
+      sendPushForSubscription: async (sub) => {
+        if (sub.endpoint === 'fails') throw new Error('boom');
+        checked.push(sub.endpoint);
+        return { sent: 1 };
+      },
+      now: () => now,
+      log: noopLog,
+      logError: (...args) => errors.push(args),
+    });
+    assert.deepEqual(checked, ['ok']);
+    assert.equal(result.sent, 1);
+    assert.equal(errors.length, 1);
+    assert.equal(store.rows.find((r) => r.endpoint === 'fails').lastCheckedAt, null);
   });
 });

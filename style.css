@@ -131,6 +131,11 @@ header h1 { margin: 0; font-size: 1.25rem; font-weight: 700; letter-spacing: -0.
 
 .diagnostics-button:hover { color: var(--fg); }
 
+/* "Push: On" state (#push-toggle, which reuses .diagnostics-button's base
+   look) - same accent used for the "N new" status callout elsewhere. */
+#push-toggle.is-active { color: var(--accent); font-weight: 600; }
+#push-toggle:disabled { opacity: 0.6; }
+
 .header-last-updated { font-size: 0.8rem; color: var(--muted); }
 
 .theme-toggle {
@@ -402,6 +407,22 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
 .edit-company-name:hover { border-bottom-color: var(--border); }
 .edit-company-name:focus { border-bottom-color: var(--accent); outline: none; }
 
+/* Sector/portfolio tag - narrower and secondary to the name field, same
+   underline-on-hover/focus treatment. */
+.edit-company-group {
+  flex: 0 1 8rem;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.3rem 0;
+  border: none;
+  border-bottom: 1px solid transparent;
+  background: none;
+  color: var(--muted);
+}
+.edit-company-group:hover { border-bottom-color: var(--border); }
+.edit-company-group:focus { border-bottom-color: var(--accent); outline: none; color: var(--fg); }
+
 .edit-company-row .lei { color: var(--muted); font-size: 0.75rem; flex: 0 0 auto; white-space: nowrap; }
 
 .remove-company,
@@ -495,6 +516,23 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
   display: flex;
   gap: 0.5rem;
 }
+
+#views-manager select,
+#views-manager input {
+  font: inherit;
+  width: 100%;
+  padding: 0.35rem 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  color: var(--fg);
+  margin-top: 0.4rem;
+}
+#views-manager select:focus,
+#views-manager input:focus { border-bottom-color: var(--accent); outline: none; }
+.views-buttons { margin-top: 0.5rem; }
+.views-buttons button:disabled { opacity: 0.45; cursor: default; }
 
 #reports-header {
   display: flex;
@@ -597,7 +635,8 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
 
 #report-filter:focus { border-bottom-color: var(--accent); outline: none; }
 
-#sort-select {
+#sort-select,
+#group-filter {
   font: inherit;
   padding: 0.3rem 0.4rem;
   border: 1px solid var(--border);
@@ -1050,6 +1089,29 @@ button:disabled { opacity: 0.5; cursor: default; background: none; }
    there's no column grid to hold a header checkbox per category - six
    small toggle chips instead, each active (filled) only when literally
    every trust already has that type checked. */
+/* Subscription-wide keyword filter - one plain labelled input, matching
+   the "Add an email" row's input styling above. */
+.notifications-keyword-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.notifications-keyword-row label { font-size: 0.8rem; color: var(--muted); }
+.notifications-keyword-row input {
+  flex: 1 1 12rem;
+  min-width: 0;
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--fg);
+}
+.notifications-keyword-row input:focus { border-color: var(--accent); outline: none; }
+
 .notifications-bulk-row {
   display: flex;
   align-items: center;

@@ -21,6 +21,15 @@ services:
       # secret once, so nothing sensitive is committed here either.
       - key: VIEW_TOKEN_SECRET
         generateValue: true
+      # Real Web Push notifications (see README.md's "Push notifications"
+      # section) - sync: false rather than generateValue, since these two
+      # must be a matched key pair from `npx web-push generate-vapid-keys`,
+      # not independently generated random strings. Optional - without
+      # both set, the "Push" button in the header never appears.
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
       # Backs the NSM result cache (lib/cacheStore.js), automatic email
       # digest subscriptions (lib/subscriptionStore.js), the shared company
       # watchlist (lib/watchlistStore.js), and which reports have already

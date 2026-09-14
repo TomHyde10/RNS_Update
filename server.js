@@ -16,7 +16,7 @@ const { URL } = require('url');
 // Runs before the lib/ requires below, since lib/cacheStore.js reads
 // DATABASE_URL at load time.
 const SECRET_FILE_DIR = process.env.SECRET_FILE_DIR || '/etc/secrets';
-for (const key of ['RESEND_API_KEY', 'NOTIFY_EMAIL_FROM', 'NOTIFY_EMAIL_TO', 'DATABASE_URL', 'DATABASE_SSL_CA', 'APP_USERNAME', 'APP_PASSWORD', 'VIEW_TOKEN_SECRET']) {
+for (const key of ['RESEND_API_KEY', 'NOTIFY_EMAIL_FROM', 'NOTIFY_EMAIL_TO', 'DATABASE_URL', 'DATABASE_SSL_CA', 'APP_USERNAME', 'APP_PASSWORD', 'VIEW_TOKEN_SECRET', 'VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY', 'VAPID_SUBJECT']) {
   if (process.env[key]) continue;
   try {
     process.env[key] = fs.readFileSync(path.join(SECRET_FILE_DIR, key), 'utf8').trim();
@@ -38,6 +38,9 @@ const { digestSendAllowed, sendDigestForSubscription, sendTestDigest } = require
 const digestScheduler = require('./lib/digestScheduler');
 const watchlistStore = require('./lib/watchlistStore');
 const seenStore = require('./lib/seenStore');
+const pushStore = require('./lib/pushStore');
+const webPush = require('./lib/webPush');
+const { sendPushForSubscription } = require('./lib/sendPush');
 
 const PORT = process.env.PORT || 3000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -67,11 +70,21 @@ function normalizeSendTimeUtc(value) {
   return SEND_TIME_UTC_RE.test(value) ? value : '08:00';
 }
 
+// Subscription-wide keyword filter (see lib/subscriptionStore.js /
+// lib/sendDigest.js's filterDigestReports) - trimmed and capped well short
+// of any real limit, same reasoning as the watchlist `group` field above.
+function normalizeKeyword(value) {
+  return typeof value === 'string' ? value.trim().slice(0, 200) : '';
+}
+
 const STATIC_FILES = {
   '/': { file: 'index.html', type: 'text/html' },
   '/index.html': { file: 'index.html', type: 'text/html' },
   '/style.css': { file: 'style.css', type: 'text/css' },
   '/app.js': { file: 'app.js', type: 'text/javascript' },
+  // Must be served from the root (not e.g. /js/sw.js) for its default scope
+  // to cover the whole site - see app.js's registerServiceWorker().
+  '/sw.js': { file: 'sw.js', type: 'text/javascript' },
 };
 
 // Reads a POST's JSON body and passes it to onBody, or responds with an error
@@ -283,7 +296,15 @@ const server = http.createServer(async (req, res) => {
       const list = Array.isArray(body.companies) ? body.companies : [];
       const valid = list
         .filter((c) => c && typeof c.lei === 'string' && LEI_RE.test(c.lei.toUpperCase()))
-        .map((c) => ({ lei: c.lei.toUpperCase(), name: typeof c.name === 'string' ? c.name.trim() : '', enabled: c.enabled !== false }));
+        .map((c) => ({
+          lei: c.lei.toUpperCase(),
+          name: typeof c.name === 'string' ? c.name.trim() : '',
+          enabled: c.enabled !== false,
+          // Free-text sector/portfolio tag (see lib/watchlistStore.js) -
+          // capped well short of any real column limit, just to stop an
+          // absurdly long value from a malformed request.
+          group: typeof c.group === 'string' ? c.group.trim().slice(0, 100) : '',
+        }));
       try {
         const companies = await watchlistStore.replaceCompanies(valid);
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -335,6 +356,86 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: `Failed to save seen reports: ${err.message || err}` }));
+      }
+    });
+    return;
+  }
+
+  // Whether Web Push is usable at all on this deployment (both a database
+  // to store subscriptions in and a VAPID key pair configured - see
+  // lib/pushStore.js/lib/webPush.js) and, if so, the public key the browser
+  // needs to create a subscription (PushManager.subscribe's
+  // applicationServerKey - see app.js's subscribeToPush()). The private key
+  // never leaves the server.
+  if (parsed.pathname === '/api/push/public-key' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ enabled: pushStore.enabled && webPush.configured, publicKey: webPush.publicKey }));
+    return;
+  }
+
+  // Creates or updates this browser's push subscription - an upsert keyed
+  // by the endpoint URL itself (see lib/pushStore.js), so re-subscribing
+  // after the watchlist/search settings change (app.js's
+  // syncPushSubscription()) just replaces its prefs rather than piling up
+  // duplicate rows for the same browser.
+  if (parsed.pathname === '/api/push/subscribe' && req.method === 'POST') {
+    readJsonBody(req, res, async (body) => {
+      if (!pushStore.enabled || !webPush.configured) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Push notifications need a database (DATABASE_URL) and VAPID keys (VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY) configured on this deployment.' }));
+        return;
+      }
+      const sub = body.subscription;
+      if (!sub || typeof sub.endpoint !== 'string' || !sub.keys || typeof sub.keys.p256dh !== 'string' || typeof sub.keys.auth !== 'string') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid push subscription.' }));
+        return;
+      }
+      const leis = Array.isArray(body.leis) ? body.leis.map((l) => String(l).trim().toUpperCase()).filter((l) => LEI_RE.test(l)) : [];
+      const categories = Array.isArray(body.categories) ? body.categories.map((c) => String(c).trim()).filter(Boolean).slice(0, 20) : [];
+      const keyword = normalizeKeyword(body.keyword);
+      try {
+        const subscription = await pushStore.upsertPushSubscription({ endpoint: sub.endpoint, keys: sub.keys, leis, categories, keyword });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ subscription }));
+        // Not awaited - see the same call after /api/subscriptions writes
+        // below. A newly-enabled (or newly re-synced) push subscription
+        // should tighten the scheduler's poll cadence right away, not wait
+        // for the next tick to notice it exists.
+        scheduleNextDigestCheck();
+      } catch (err) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Failed to save push subscription: ${err.message || err}` }));
+      }
+    });
+    return;
+  }
+
+  // Turning push off in a browser (or the subscription having gone stale
+  // client-side) removes its row entirely - unlike email subscriptions
+  // there's no "paused" state to fall back to, since there's no address to
+  // keep around for later; re-enabling just creates a fresh subscription.
+  if (parsed.pathname === '/api/push/subscribe' && req.method === 'DELETE') {
+    readJsonBody(req, res, async (body) => {
+      if (!pushStore.enabled) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      const endpoint = typeof body.endpoint === 'string' ? body.endpoint : '';
+      if (!endpoint) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing endpoint.' }));
+        return;
+      }
+      try {
+        await pushStore.deletePushSubscription(endpoint);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+        scheduleNextDigestCheck();
+      } catch (err) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Failed to remove push subscription: ${err.message || err}` }));
       }
     });
     return;
@@ -408,6 +509,7 @@ const server = http.createServer(async (req, res) => {
           scheduleType: normalizeScheduleType(body.scheduleType),
           sendTimeUtc: normalizeSendTimeUtc(body.sendTimeUtc),
           prefs: body.prefs && typeof body.prefs === 'object' ? body.prefs : {},
+          keyword: normalizeKeyword(body.keyword),
         });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ subscription }));
@@ -437,6 +539,7 @@ const server = http.createServer(async (req, res) => {
           scheduleType: normalizeScheduleType(body.scheduleType),
           sendTimeUtc: normalizeSendTimeUtc(body.sendTimeUtc),
           prefs: body.prefs && typeof body.prefs === 'object' ? body.prefs : {},
+          keyword: normalizeKeyword(body.keyword),
         });
         if (!subscription) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -575,6 +678,15 @@ function runDueDigests() {
   return digestScheduler.runDueDigests({ subscriptionStore, sendDigestForSubscription });
 }
 
+// Same idea as runDueDigests() above, but for Web Push (lib/pushStore.js/
+// lib/sendPush.js) - every push subscription is checked on every tick
+// (there's no per-subscription schedule to be "due" against), so this is
+// unconditional rather than filtered by isDue() the way email's is. See
+// lib/digestScheduler.js's runDuePush().
+function runDuePush() {
+  return digestScheduler.runDuePush({ pushStore, sendPushForSubscription });
+}
+
 let digestCheckTimer = null;
 
 // The check cadence itself isn't fixed - it's derived from the fastest
@@ -584,16 +696,22 @@ let digestCheckTimer = null;
 // scheduling the next check from the previous one, which would keep using
 // a since-stale interval until the next tick happens to notice.
 async function scheduleNextDigestCheck() {
-  if (!subscriptionStore.enabled) return;
+  if (!subscriptionStore.enabled && !pushStore.enabled) return;
   if (digestCheckTimer) clearTimeout(digestCheckTimer);
 
   let subscriptions = [];
   try {
-    subscriptions = await subscriptionStore.listSubscriptions();
+    subscriptions = subscriptionStore.enabled ? await subscriptionStore.listSubscriptions() : [];
   } catch (err) {
     console.error('Failed to load subscriptions for digest scheduling:', err.message || err);
   }
-  const intervalMs = digestScheduler.computePollIntervalMinutes(subscriptions) * 60 * 1000;
+  let pushCount = 0;
+  try {
+    pushCount = pushStore.enabled ? (await pushStore.listPushSubscriptions()).length : 0;
+  } catch (err) {
+    console.error('Failed to load push subscriptions for digest scheduling:', err.message || err);
+  }
+  const intervalMs = digestScheduler.computePollIntervalMinutes(subscriptions, pushCount > 0) * 60 * 1000;
 
   // unref() so this timer alone can't keep the process alive - in normal
   // operation the still-listening HTTP server already does that; this
@@ -603,14 +721,16 @@ async function scheduleNextDigestCheck() {
   // to clear otherwise).
   digestCheckTimer = setTimeout(async () => {
     await runDueDigests();
+    await runDuePush();
     scheduleNextDigestCheck();
   }, intervalMs).unref();
 }
 
 server.listen(PORT, () => {
   console.log(`RNS Update running at http://localhost:${PORT}`);
-  if (subscriptionStore.enabled) {
+  if (subscriptionStore.enabled || pushStore.enabled) {
     runDueDigests(); // catch up on anything due right after a cold start
+    runDuePush();
     scheduleNextDigestCheck();
   }
 });
