@@ -699,19 +699,26 @@ async function scheduleNextDigestCheck() {
   if (!subscriptionStore.enabled && !pushStore.enabled) return;
   if (digestCheckTimer) clearTimeout(digestCheckTimer);
 
-  let subscriptions = [];
-  try {
-    subscriptions = subscriptionStore.enabled ? await subscriptionStore.listSubscriptions() : [];
-  } catch (err) {
-    console.error('Failed to load subscriptions for digest scheduling:', err.message || err);
-  }
-  let pushCount = 0;
-  try {
-    pushCount = pushStore.enabled ? (await pushStore.listPushSubscriptions()).length : 0;
-  } catch (err) {
-    console.error('Failed to load push subscriptions for digest scheduling:', err.message || err);
-  }
-  const intervalMs = digestScheduler.computePollIntervalMinutes(subscriptions, pushCount > 0) * 60 * 1000;
+  // Independent per-store lookups, run concurrently rather than one after
+  // the other - neither depends on the other's result. Push only needs a
+  // yes/no (hasSubscriptions(), not a full row listing - see
+  // lib/pushStore.js) since computePollIntervalMinutes() below only cares
+  // whether any push subscription exists at all, not what's in them.
+  const [subscriptions, hasPush] = await Promise.all([
+    subscriptionStore.enabled
+      ? subscriptionStore.listSubscriptions().catch((err) => {
+          console.error('Failed to load subscriptions for digest scheduling:', err.message || err);
+          return [];
+        })
+      : Promise.resolve([]),
+    pushStore.enabled
+      ? pushStore.hasSubscriptions().catch((err) => {
+          console.error('Failed to load push subscriptions for digest scheduling:', err.message || err);
+          return false;
+        })
+      : Promise.resolve(false),
+  ]);
+  const intervalMs = digestScheduler.computePollIntervalMinutes(subscriptions, hasPush) * 60 * 1000;
 
   // unref() so this timer alone can't keep the process alive - in normal
   // operation the still-listening HTTP server already does that; this

@@ -1320,7 +1320,12 @@ function notifyNewReports(newReports, settings) {
 // kept in sync via maybeSyncPushSubscription(), called from saveWatchlist()
 // and saveSettings() above, rather than offering its own separate
 // company/category picker.
-const PUSH_ENABLED_KEY = 'rns-push-enabled';
+//
+// Deliberately no separate "is push on" flag in localStorage: whether this
+// browser has push on is always re-derived from
+// registration.pushManager.getSubscription() (a cheap local call, not a
+// network round trip), so there's nothing here that can go stale relative
+// to the browser's own real subscription state.
 
 // Web Push's applicationServerKey wants the VAPID public key as a raw
 // Uint8Array, not the base64url string /api/push/public-key returns -
@@ -1338,6 +1343,14 @@ function urlBase64ToUint8Array(base64String) {
 function pushSupported() {
   return 'serviceWorker' in navigator && 'PushManager' in window && typeof Notification !== 'undefined';
 }
+
+// Whether *this deployment* offers push at all (DATABASE_URL + VAPID keys
+// configured - see server.js's GET /api/push/public-key), fetched once by
+// initPushControl() at startup and cached here so maybeSyncPushSubscription()
+// (fired on every watchlist/settings edit) can skip registering a service
+// worker at all on a deployment that never offers push, instead of
+// re-fetching this on every single edit.
+let pushDeploymentEnabled = false;
 
 let swRegistrationPromise = null;
 function registerServiceWorker() {
@@ -1374,37 +1387,48 @@ function currentPushPrefs() {
   return { leis, categories: settings.categories, keyword: settings.keyword };
 }
 
-async function syncPushSubscription(subscription) {
+// Guards against re-POSTing identical prefs on every call - compared
+// against the last prefs snapshot actually sent (not persisted anywhere),
+// so it's just a cheap short-circuit, never a second source of truth about
+// whether push is on. `force` (used when a subscription is first created,
+// in togglePush()) always sends, since there's nothing to compare against
+// the very first time.
+let lastSyncedPushPrefs = null;
+
+async function syncPushSubscription(subscription, { force = false } = {}) {
   const prefs = currentPushPrefs();
+  const serialized = JSON.stringify(prefs);
+  if (!force && serialized === lastSyncedPushPrefs) return;
   try {
     await fetch('/api/push/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ subscription: subscription.toJSON(), ...prefs }),
     });
+    lastSyncedPushPrefs = serialized;
   } catch (err) {
     console.error('Failed to sync push subscription:', err);
   }
 }
 
 // Called after every watchlist/settings change (see saveWatchlist()/
-// saveSettings() above) - a no-op unless this browser has actually turned
-// push on (PUSH_ENABLED_KEY), and unless a subscription still genuinely
-// exists (it can vanish browser-side without this app ever hearing about
-// it - permission revoked, site data cleared, etc.), in which case the
-// stale local flag is cleared rather than repeatedly trying to sync
-// something that no longer exists.
-async function maybeSyncPushSubscription() {
-  if (localStorage.getItem(PUSH_ENABLED_KEY) !== 'true' || !pushSupported()) return;
-  const registration = await registerServiceWorker();
-  if (!registration) return;
-  const subscription = await registration.pushManager.getSubscription();
-  if (!subscription) {
-    localStorage.removeItem(PUSH_ENABLED_KEY);
-    updatePushToggleButton(false);
-    return;
-  }
-  syncPushSubscription(subscription);
+// saveSettings() above) - debounced so a burst of edits (e.g. toggling
+// several companies in a row in Edit companies, each of which calls
+// saveWatchlist() separately) coalesces into one sync of the end state,
+// not one network round trip per edit. A no-op unless this browser
+// actually has a live subscription (re-checked fresh each time - see the
+// note above on why there's no separate "is push on" flag to go stale).
+let pushSyncTimer = null;
+function maybeSyncPushSubscription() {
+  if (!pushSupported() || !pushDeploymentEnabled) return;
+  clearTimeout(pushSyncTimer);
+  pushSyncTimer = setTimeout(async () => {
+    const registration = await registerServiceWorker();
+    if (!registration) return;
+    const subscription = await registration.pushManager.getSubscription();
+    updatePushToggleButton(Boolean(subscription)); // reflects a subscription that vanished browser-side (permission revoked, site data cleared) since this button was last updated
+    if (subscription) syncPushSubscription(subscription);
+  }, 500);
 }
 
 function updatePushToggleButton(enabled) {
@@ -1431,7 +1455,7 @@ async function togglePush() {
         body: JSON.stringify({ endpoint: existing.endpoint }),
       }).catch(() => {});
       await existing.unsubscribe();
-      localStorage.removeItem(PUSH_ENABLED_KEY);
+      lastSyncedPushPrefs = null;
       updatePushToggleButton(false);
       return;
     }
@@ -1446,6 +1470,7 @@ async function togglePush() {
       alert("Push notifications aren't configured on this deployment yet.");
       return;
     }
+    pushDeploymentEnabled = true;
 
     const permission = await Notification.requestPermission();
     if (permission !== 'granted') return;
@@ -1454,8 +1479,7 @@ async function togglePush() {
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(publicKey),
     });
-    await syncPushSubscription(subscription);
-    localStorage.setItem(PUSH_ENABLED_KEY, 'true');
+    await syncPushSubscription(subscription, { force: true });
     updatePushToggleButton(true);
   } catch (err) {
     console.error('Failed to toggle push notifications:', err);
@@ -1467,15 +1491,16 @@ async function togglePush() {
 
 // Shows/hides the header button based on both browser support and this
 // deployment actually offering push (see fetchPushConfig()), and reflects
-// whatever this browser's real subscription state already is (rather than
-// trusting PUSH_ENABLED_KEY blindly, which could be stale - see
-// maybeSyncPushSubscription()'s own staleness handling).
+// whatever this browser's real subscription state already is - re-derived
+// fresh from the browser itself (registration.pushManager.getSubscription()),
+// not a locally-stored flag that could drift from it.
 async function initPushControl() {
   const btn = document.getElementById('push-toggle');
   if (!pushSupported()) return;
 
   const { enabled } = await fetchPushConfig();
   if (!enabled) return;
+  pushDeploymentEnabled = true;
 
   btn.hidden = false;
   btn.addEventListener('click', togglePush);
@@ -1483,14 +1508,8 @@ async function initPushControl() {
   const registration = await registerServiceWorker();
   if (!registration) return;
   const subscription = await registration.pushManager.getSubscription();
-  if (subscription) {
-    localStorage.setItem(PUSH_ENABLED_KEY, 'true');
-    updatePushToggleButton(true);
-    syncPushSubscription(subscription); // picks up any watchlist/settings changes made since this browser's last visit
-  } else {
-    localStorage.removeItem(PUSH_ENABLED_KEY);
-    updatePushToggleButton(false);
-  }
+  updatePushToggleButton(Boolean(subscription));
+  if (subscription) syncPushSubscription(subscription); // picks up any watchlist/settings changes made since this browser's last visit
 }
 
 function toCsvField(value) {
@@ -1586,12 +1605,15 @@ function renderReportsList() {
 
   const filterText = filterInput.value.trim().toLowerCase();
   const groupFilter = loadGroupFilter();
-  const groupByLei = companyGroupByLei();
 
   let visible = lastReports.filter(
     (r) => !filterText || r.company.toLowerCase().includes(filterText) || r.title.toLowerCase().includes(filterText)
   );
   if (groupFilter !== 'all') {
+    // Only built when actually filtering by group - renderReportsList()
+    // runs on every keystroke in the text filter above, and most of those
+    // calls have no group filter active at all.
+    const groupByLei = companyGroupByLei();
     visible = visible.filter((r) => {
       const group = groupByLei.get(r.lei) || '';
       return groupFilter === '__ungrouped' ? !group : group === groupFilter;
@@ -2357,7 +2379,7 @@ function initViewsPanel() {
       return;
     }
     const views = loadViews();
-    const view = { id: `v${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name, ...currentViewSnapshot() };
+    const view = { id: crypto.randomUUID(), name, ...currentViewSnapshot() };
     views.push(view);
     saveViews(views);
     saveActiveViewId(view.id);
