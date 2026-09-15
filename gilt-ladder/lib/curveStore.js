@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { fetchCurve } = require('./curve');
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+const DATA_DIR = process.env.GILT_LADDER_DATA_DIR || path.join(__dirname, '..', 'data');
 const SNAPSHOT = path.join(DATA_DIR, 'curve.json');
 
 // The BoE publishes once each business morning, so anything younger than this

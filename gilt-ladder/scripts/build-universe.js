@@ -1,6 +1,6 @@
 // Turns a DMO "Gilts in Issue" (report D1A) export into config/gilts.js.
 //
-//   node scripts/build-universe.js ~/Downloads/GiltsInIssue.xlsx
+//   node gilt-ladder/scripts/build-universe.js ~/Downloads/GiltsInIssue.xlsx
 //
 // The download is manual because dmo.gov.uk blocks automated clients (see
 // scripts/phase0-data-probe.js). Open
@@ -69,7 +69,7 @@ function columnFor(headers, ...needles) {
 function main() {
   const file = process.argv[2];
   if (!file) {
-    console.error('usage: node scripts/build-universe.js <GiltsInIssue.xlsx>');
+    console.error('usage: node gilt-ladder/scripts/build-universe.js <GiltsInIssue.xlsx>');
     process.exit(2);
   }
 

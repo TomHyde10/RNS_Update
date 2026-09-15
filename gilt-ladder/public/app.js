@@ -226,7 +226,7 @@ async function build() {
   const portfolioValue = $('portfolio-value').value;
 
   try {
-    const res = await fetch('/api/ladder', {
+    const res = await fetch('api/ladder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -270,7 +270,7 @@ async function init() {
   addLiabilityRow(`${year + 6}-09-30`, '25000');
 
   try {
-    const universe = await fetch('/api/universe').then((r) => r.json());
+    const universe = await fetch('api/universe').then((r) => r.json());
     if (universe.source === 'sample') $('sample-banner').hidden = false;
   } catch {
     // The banner is a safety net, not a blocker - if this call fails the build

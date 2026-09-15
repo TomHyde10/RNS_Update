@@ -41,6 +41,7 @@ const seenStore = require('./lib/seenStore');
 const pushStore = require('./lib/pushStore');
 const webPush = require('./lib/webPush');
 const { sendPushForSubscription } = require('./lib/sendPush');
+const giltLadder = require('./gilt-ladder/router');
 
 const PORT = process.env.PORT || 3000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -128,6 +129,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   const parsed = new URL(req.url, `http://${req.headers.host}`);
+
+  // The Gilt Ladder (gilt-ladder/) owns everything under its own prefix -
+  // its frontend and its /gilt-ladder/api/* routes - behind the same Basic
+  // Auth gate above. See gilt-ladder/README.md.
+  if (giltLadder.owns(parsed.pathname)) {
+    await giltLadder.handle(req, res, parsed);
+    return;
+  }
 
   if (parsed.pathname === '/api/reports') {
     const resolved = resolveReportQuery((key) => parsed.searchParams.get(key));
@@ -740,6 +749,10 @@ server.listen(PORT, () => {
     runDuePush();
     scheduleNextDigestCheck();
   }
+  // Only when run directly - test/subscriptionsApi.test.js also starts this
+  // server, and its curve warm-up would otherwise reach out to the Bank of
+  // England and hold the test process open until that fetch finished.
+  if (require.main === module) giltLadder.start();
 });
 
 // Not used by the app itself (nothing else requires this file) - only so

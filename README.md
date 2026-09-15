@@ -9,6 +9,12 @@ company disclosures. No API key, no account, no cost.
 Static HTML/CSS/JS frontend + a small serverless function that proxies the
 NSM search so the browser doesn't need to talk to it directly.
 
+This repository also hosts **Gilt Ladder** (`gilt-ladder/`), a separate tool
+that builds a gilt portfolio to fund dated liabilities. `server.js` serves it
+at `/gilt-ladder/`, behind the same login, and the header's "Gilt Ladder" link
+goes there. It is only available where `server.js` runs, not on Vercel. See
+[gilt-ladder/README.md](gilt-ladder/README.md).
+
 ## Setup
 
 1. Run locally:
@@ -743,6 +749,10 @@ push-notification scheduler added alongside it (both share
   cleans up the rows it creates, but should still only ever point at
   something disposable, never production.
 
+`npm test` also runs `gilt-ladder/test/` - the Gilt Ladder's bond maths,
+calendar, curve parsing, ladder construction, and its mount under
+`/gilt-ladder/`. None of those tests need the network.
+
 Nothing else in the app (the NSM integration, the frontend, CSV/RSS export,
 manual "Send Notification") has automated coverage yet - this suite is
 scoped specifically to the recurring-digest and push-notification systems.
@@ -779,6 +789,7 @@ middleware.js                   Vercel Edge Middleware - the Vercel-side half of
 server.js                       Plain Node dev server (static files + /api/reports + /api/watchlist + /api/feed + /api/notify + /api/view + /api/companies + /api/subscriptions + /api/push/*)
 config/watchlist.js             Default company list - seeds a fresh browser, and fallback for /api/reports called with no `leis` param
 Dockerfile, .dockerignore       Fallback build path for Northflank (or anywhere else that wants a container) - see "Deploying (Northflank)"
+gilt-ladder/                    Gilt Ladder, served by server.js at /gilt-ladder/ via gilt-ladder/router.js - self-contained, see gilt-ladder/README.md
 ```
 
 Note: `/api/companies`, `/api/subscriptions*`, `/api/due-dates`,

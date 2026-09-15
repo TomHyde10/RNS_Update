@@ -5,7 +5,7 @@
 // prefix so they cannot collide with a real instrument, and the coupons and
 // redemption dates are made up. It exists so the application runs, and so the
 // shape of a real universe is documented, nothing more. `source: 'sample'` is
-// surfaced by /api/universe and the UI renders an unmissable banner while it
+// surfaced by /gilt-ladder/api/universe and the UI renders an unmissable banner while it
 // is set.
 //
 // To replace it with the real universe:
@@ -13,7 +13,7 @@
 //      BROWSER and export the "Gilts in Issue" report as Excel. This step is
 //      manual because dmo.gov.uk blocks automated clients - see
 //      scripts/phase0-data-probe.js.
-//   2. node scripts/build-universe.js <the-downloaded-file.xlsx>
+//   2. node gilt-ladder/scripts/build-universe.js <the-downloaded-file.xlsx>
 //
 // That regenerates this file with `source: 'dmo'` and the report's own as-at
 // date. Do it when a new gilt is issued or one redeems - a few times a year.

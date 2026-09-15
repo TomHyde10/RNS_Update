@@ -3,13 +3,21 @@
 Builds a gilt ladder that funds a set of dated liabilities: you give it what
 you have and what you owe when, it tells you which gilts to buy.
 
-No API keys, no account, no paid data feed. Node with **zero runtime
-dependencies**.
+No API keys, no account, no paid data feed, and **zero runtime dependencies**
+of its own.
+
+It runs inside the RNS Update server, mounted at `/gilt-ladder/`: same
+process, same deployment, same login. From the repository root:
 
 ```
-npm start      # http://localhost:3001
-npm test       # 40 tests, no network needed
+npm start      # RNS at http://localhost:3000, Gilt Ladder at http://localhost:3000/gilt-ladder/
+npm test       # runs both apps' suites; the gilt tests need no network
 ```
+
+`router.js` is the mount. `server.js` hands it every path under
+`/gilt-ladder` after the Basic Auth check. Everything else in this directory
+is self-contained: nothing here requires RNS code, and RNS only requires
+`router.js`.
 
 ## What it does
 
@@ -50,13 +58,13 @@ rather than silently priced as though conventional.
 | What | Where | How |
 |---|---|---|
 | Gilt spot curve | Bank of England, `latest-yield-curve-data.zip` | Fetched automatically, daily, cached |
-| Gilt universe | DMO "Gilts in Issue" (D1A) | **Manual** download, then `npm run build-universe` |
+| Gilt universe | DMO "Gilts in Issue" (D1A) | **Manual** download, then `npm run gilt:build-universe -- <file>` |
 
 ### Why the universe is a committed file
 
 `dmo.gov.uk` sits behind ShieldSquare/PerfDrive bot detection that blocks
 identified server clients across the whole site, homepage included. Measured
-with `npm run probe`: 0/5 on every endpoint, with roughly a 1-in-20 intermittent
+with `npm run gilt:probe`: 0/5 on every endpoint, with roughly a 1-in-20 intermittent
 leak — which is *worse* than a clean block, because a nightly job would appear
 to work and then serve stale data without saying so.
 
@@ -66,7 +74,7 @@ gilts are issued or redeemed a year:
 
 1. Open <https://www.dmo.gov.uk/data/pdfdatareport?reportCode=D1A> **in a
    browser** and export the report as Excel.
-2. `node scripts/build-universe.js ~/Downloads/GiltsInIssue.xlsx`
+2. `npm run gilt:build-universe -- ~/Downloads/GiltsInIssue.xlsx`
 
 That rewrites `config/gilts.js` and validates it. Until you do, the app runs on
 clearly-labelled **sample data** with an unmissable banner — the ISINs use the
@@ -145,35 +153,41 @@ records the runner-up for each rung so the gap is visible.
 
 | Route | Purpose |
 |---|---|
-| `POST /api/ladder` | Build a ladder. Body: `liabilities[]`, `portfolioValue`, `marginalRate`, `lotSize`, `bufferBusinessDays` |
-| `GET /api/universe` | The gilt universe and whether it is real or sample |
-| `GET /api/curve` | The cached curve, its date, and whether it is stale |
-| `GET /api/health` | Liveness |
+| `POST /gilt-ladder/api/ladder` | Build a ladder. Body: `liabilities[]`, `portfolioValue`, `marginalRate`, `lotSize`, `bufferBusinessDays` |
+| `GET /gilt-ladder/api/universe` | The gilt universe and whether it is real or sample |
+| `GET /gilt-ladder/api/curve` | The cached curve, its date, and whether it is stale |
+| `GET /gilt-ladder/api/health` | Liveness; 503 if the universe failed validation |
 
 Every ladder response carries a `provenance` block — price basis, curve date,
 staleness, universe source — so a number that looks like a price can never
 travel without the context that it is indicative.
 
-## Deploying (Northflank)
+The frontend uses relative URLs (`api/ladder`, `style.css`) so it never
+collides with RNS's own `/style.css` and `/app.js`. That only works from the
+trailing-slash URL, so `/gilt-ladder` redirects to `/gilt-ladder/`.
 
-1. New service → point it at this repo. The buildpack should detect a Node app;
-   `Dockerfile` is the fallback if detection has trouble.
-2. **Port**: the service listens on `PORT` (default 3001). Set the port in
-   Northflank's networking tab to match, and expose it publicly.
-3. **Environment**: nothing is required. See `.env.example` for the optional
-   basic-auth and `DATA_DIR` settings. On plans that only offer **secret
-   files**, mount them at `/etc/secrets/<NAME>` — `server.js` reads those as a
-   fallback when the env var is unset.
-4. **Storage**: none needed. `DATA_DIR` caches the curve so a restart does not
-   refetch, but an ephemeral filesystem is fine — the app just refetches, and
-   falls back to the last good curve if the Bank is unreachable.
+## Deploying
 
-Runs alongside the existing RNS service on its own subdomain.
+Nothing extra: it ships with every RNS deployment that runs `server.js`
+(Render, Northflank, Docker, local).
+
+- **Authentication** is RNS's `APP_USERNAME`/`APP_PASSWORD` (see the root
+  README's "Authentication"). The username defaults to `admin`; the standalone
+  app's old `gilt` default no longer applies.
+- **Storage**: none needed. `GILT_LADDER_DATA_DIR` (default
+  `gilt-ladder/data/`) caches the curve so a restart does not refetch. An
+  ephemeral filesystem is fine: the app just refetches, and falls back to the
+  last good curve if the Bank is unreachable.
+- **Failure isolation**: if `config/gilts.js` fails validation, the Gilt
+  Ladder answers 503 and logs why. RNS keeps running.
+- **Vercel is not supported.** Like RNS's database-backed routes, the Gilt
+  Ladder only exists on `server.js`, and there is no `api/*.js` function for
+  it.
 
 ## Layout
 
 ```
-server.js                  HTTP server and JSON API
+router.js                  Mount inside RNS's server.js: static files and JSON API
 public/                    Frontend (no build step, no framework)
 config/gilts.js            The gilt universe - GENERATED, see above
 config/bankHolidays.js     gov.uk bank holidays - GENERATED

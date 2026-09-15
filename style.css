@@ -131,6 +131,10 @@ header h1 { margin: 0; font-size: 1.25rem; font-weight: 700; letter-spacing: -0.
 
 .diagnostics-button:hover { color: var(--fg); }
 
+/* Link to the Gilt Ladder app (gilt-ladder/), styled like the header's
+   other low-key actions rather than as a default underlined link. */
+.app-link { text-decoration: none; }
+
 /* "Push: On" state (#push-toggle, which reuses .diagnostics-button's base
    look) - same accent used for the "N new" status callout elsewhere. */
 #push-toggle.is-active { color: var(--accent); font-weight: 600; }

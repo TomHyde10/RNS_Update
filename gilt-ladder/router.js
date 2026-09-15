@@ -1,36 +1,29 @@
-// Gilt Ladder: static frontend plus a small JSON API. Plain node:http, no
-// framework - the whole surface is three GETs and one POST.
-const http = require('http');
+// Gilt Ladder, mounted inside the RNS server at MOUNT. Serves its own static
+// frontend and a small JSON API from under that prefix; authentication is
+// the host server's job (server.js checks Basic Auth before routing here).
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
-
-// Some Northflank plans mount secrets as FILES rather than environment
-// variables. For each optional value, fall back to reading /etc/secrets/<NAME>
-// when the env var is unset. A real env var always wins.
-const SECRET_FILE_DIR = process.env.SECRET_FILE_DIR || '/etc/secrets';
-for (const key of ['APP_USERNAME', 'APP_PASSWORD']) {
-  if (process.env[key]) continue;
-  try {
-    process.env[key] = fs.readFileSync(path.join(SECRET_FILE_DIR, key), 'utf8').trim();
-  } catch {
-    // Not configured - the app runs unauthenticated, which is the default.
-  }
-}
 
 const { getCurve } = require('./lib/curveStore');
 const { load: loadUniverse, activeAt } = require('./lib/universe');
 const { buildLadder, DEFAULTS } = require('./lib/ladder');
 const { toISO, addBusinessDays } = require('./lib/calendar');
 
-const PORT = process.env.PORT || 3001;
+const MOUNT = '/gilt-ladder';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_LIABILITIES = 200;
 
-// Fail at startup rather than on the first request: a malformed universe is a
-// deployment error, and there is nothing useful this service can do without one.
-const universe = loadUniverse();
+// A malformed universe is a deployment error, but it must not take the RNS
+// app down with it: record the failure and answer every gilt route with it.
+let universe = null;
+let universeError = null;
+try {
+  universe = loadUniverse();
+} catch (err) {
+  universeError = err;
+  console.error(`Gilt Ladder disabled: ${err.message}`);
+}
 
 const CONTENT_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -48,25 +41,6 @@ const sendJson = (res, status, body) => {
   });
   res.end(payload);
 };
-
-function authorised(req) {
-  const expected = process.env.APP_PASSWORD;
-  if (!expected) return true;
-
-  const header = req.headers.authorization || '';
-  if (!header.startsWith('Basic ')) return false;
-  const [user, ...rest] = Buffer.from(header.slice(6), 'base64').toString('utf8').split(':');
-  const pass = rest.join(':');
-
-  const expectedUser = process.env.APP_USERNAME || 'gilt';
-  // timingSafeEqual needs equal lengths, so compare digests rather than the
-  // raw values.
-  const digest = (s) => crypto.createHash('sha256').update(String(s)).digest();
-  return (
-    crypto.timingSafeEqual(digest(user), digest(expectedUser)) &&
-    crypto.timingSafeEqual(digest(pass), digest(expected))
-  );
-}
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -86,8 +60,8 @@ function readBody(req) {
   });
 }
 
-function serveStatic(res, urlPath) {
-  const name = urlPath === '/' ? 'index.html' : urlPath.slice(1);
+function serveStatic(res, subPath) {
+  const name = subPath === '/' ? 'index.html' : subPath.slice(1);
   // Resolve and confirm containment rather than trusting the request path.
   const file = path.resolve(PUBLIC_DIR, name);
   if (!file.startsWith(PUBLIC_DIR + path.sep)) {
@@ -188,22 +162,39 @@ async function handleLadder(req, res) {
   }
 }
 
-const server = http.createServer(async (req, res) => {
-  if (!authorised(req)) {
-    res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Gilt Ladder"' });
-    res.end('Authentication required');
+// True when `pathname` belongs to the Gilt Ladder rather than to RNS.
+const owns = (pathname) => pathname === MOUNT || pathname.startsWith(`${MOUNT}/`);
+
+async function handle(req, res, url) {
+  // The frontend uses relative URLs so it works under any mount point, which
+  // only resolves correctly from a directory-style URL with a trailing slash.
+  if (url.pathname === MOUNT) {
+    res.writeHead(301, { Location: `${MOUNT}/${url.search}` });
+    res.end();
     return;
   }
 
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const subPath = url.pathname.slice(MOUNT.length);
 
   try {
-    if (req.method === 'POST' && url.pathname === '/api/ladder') {
+    if (subPath === '/api/health' && req.method === 'GET') {
+      sendJson(res, universeError ? 503 : 200, universeError
+        ? { ok: false, error: universeError.message }
+        : { ok: true, universe: universe.source, gilts: universe.gilts.length });
+      return;
+    }
+
+    if (subPath.startsWith('/api/') && universeError) {
+      sendJson(res, 503, { error: 'gilt universe is invalid', details: universeError.message });
+      return;
+    }
+
+    if (req.method === 'POST' && subPath === '/api/ladder') {
       await handleLadder(req, res);
       return;
     }
 
-    if (req.method === 'GET' && url.pathname === '/api/universe') {
+    if (req.method === 'GET' && subPath === '/api/universe') {
       sendJson(res, 200, {
         source: universe.source,
         asOf: universe.asOf,
@@ -213,7 +204,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === 'GET' && url.pathname === '/api/curve') {
+    if (req.method === 'GET' && subPath === '/api/curve') {
       const entry = await getCurve();
       sendJson(res, 200, {
         date: entry.curve.date,
@@ -225,13 +216,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === 'GET' && url.pathname === '/api/health') {
-      sendJson(res, 200, { ok: true, universe: universe.source, gilts: universe.gilts.length });
-      return;
-    }
-
     if (req.method === 'GET') {
-      serveStatic(res, url.pathname);
+      serveStatic(res, subPath);
       return;
     }
 
@@ -240,17 +226,16 @@ const server = http.createServer(async (req, res) => {
     console.error(err);
     sendJson(res, 500, { error: 'internal error' });
   }
-});
-
-if (require.main === module) {
-  server.listen(PORT, () => {
-    console.log(`Gilt Ladder on http://localhost:${PORT}`);
-    if (universe.source === 'sample') {
-      console.warn('WARNING: running on the SAMPLE gilt universe - see config/gilts.js');
-    }
-    // Warm the curve so the first real request is not the one that waits.
-    getCurve().catch((err) => console.warn(`initial curve fetch failed: ${err.message}`));
-  });
 }
 
-module.exports = { server, validateRequest };
+// Called once the host server is listening: warns about sample data and warms
+// the curve so the first real request is not the one that waits for the Bank.
+function start() {
+  if (universeError) return;
+  if (universe.source === 'sample') {
+    console.warn('WARNING: Gilt Ladder is running on the SAMPLE gilt universe - see gilt-ladder/config/gilts.js');
+  }
+  getCurve().catch((err) => console.warn(`Gilt Ladder initial curve fetch failed: ${err.message}`));
+}
+
+module.exports = { MOUNT, owns, handle, start, validateRequest };
