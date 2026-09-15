@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gilt Ladder</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div id="sample-banner" class="banner" hidden>
+      <strong>Sample data.</strong> This is running on an invented gilt universe, not real gilts.
+      Nothing here is an investment decision. See <code>config/gilts.js</code>.
+    </div>
+
+    <header>
+      <h1>Gilt Ladder</h1>
+      <p class="sub">
+        Build a gilt ladder that funds dated liabilities. Prices are derived from the Bank of
+        England nominal gilt curve and are <strong>indicative</strong> &mdash; they are not dealable
+        market prices.
+      </p>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>Your position</h2>
+        <div class="field-row">
+          <label>
+            Portfolio value
+            <span class="hint">what you have to invest; optional</span>
+            <input id="portfolio-value" type="number" min="0" step="1000" placeholder="250000" />
+          </label>
+          <label>
+            Marginal income tax rate
+            <span class="hint">0% for an ISA or SIPP</span>
+            <select id="marginal-rate">
+              <option value="0">0% &mdash; ISA / SIPP</option>
+              <option value="0.2">20% &mdash; basic rate</option>
+              <option value="0.4">40% &mdash; higher rate</option>
+              <option value="0.45">45% &mdash; additional rate</option>
+            </select>
+          </label>
+          <label>
+            Dealing lot size
+            <span class="hint">nominal, rounded up</span>
+            <input id="lot-size" type="number" min="1" step="100" value="100" />
+          </label>
+          <label>
+            Cash buffer
+            <span class="hint">business days before each liability</span>
+            <input id="buffer" type="number" min="0" max="60" step="1" value="5" />
+          </label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Liabilities</h2>
+        <table id="liabilities" class="input-table">
+          <thead>
+            <tr>
+              <th>Date due</th>
+              <th>Amount (&pound;)</th>
+              <th><span class="sr-only">Remove</span></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="actions">
+          <button id="add-liability" type="button" class="secondary">Add liability</button>
+          <button id="build" type="button" class="primary">Build ladder</button>
+        </div>
+        <p id="status" class="status" role="status"></p>
+      </section>
+
+      <section id="results" hidden>
+        <div class="panel">
+          <h2>Summary</h2>
+          <div id="summary" class="summary-grid"></div>
+          <div id="warnings"></div>
+        </div>
+
+        <div class="panel">
+          <h2>The ladder</h2>
+          <div class="scroll-x">
+            <table id="holdings" class="data-table">
+              <thead>
+                <tr>
+                  <th>Gilt</th>
+                  <th>ISIN</th>
+                  <th class="num">Coupon</th>
+                  <th>Redeems</th>
+                  <th class="num">Nominal (&pound;)</th>
+                  <th class="num">Price</th>
+                  <th class="num">Cost (&pound;)</th>
+                  <th>Funds</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Cash flows against liabilities</h2>
+          <div id="chart" class="scroll-x"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Coverage</h2>
+          <div class="scroll-x">
+            <table id="coverage" class="data-table">
+              <thead>
+                <tr>
+                  <th>Liability</th>
+                  <th class="num">Amount (&pound;)</th>
+                  <th>Covered</th>
+                  <th class="num">Surplus carried (&pound;)</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <p id="provenance" class="provenance"></p>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

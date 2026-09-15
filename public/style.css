@@ -1,0 +1,314 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --ink: #16191d;
+  --muted: #5c6672;
+  --line: #dde1e6;
+  --accent: #1f4d8f;
+  --good: #1a7f47;
+  --bad: #ad2b2b;
+  --warn-bg: #fdf3d8;
+  --warn-ink: #6b4e00;
+  --warn-line: #e4c765;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171b;
+    --panel: #1c2027;
+    --ink: #e7eaee;
+    --muted: #97a1ad;
+    --line: #2f3641;
+    --accent: #79a9ee;
+    --good: #57c98a;
+    --bad: #f0827f;
+    --warn-bg: #3a3116;
+    --warn-ink: #f0d894;
+    --warn-line: #6e5c22;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0 1rem 4rem;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+main,
+header,
+.banner {
+  max-width: 1040px;
+  margin-inline: auto;
+}
+
+header {
+  padding: 2rem 0 1rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.7rem;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  margin: 0 0 1rem;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+}
+
+.sub {
+  margin: 0.4rem 0 0;
+  color: var(--muted);
+  max-width: 62ch;
+}
+
+.banner {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--warn-line);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+}
+
+.panel {
+  margin-bottom: 1.25rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1rem;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-weight: 600;
+  font-size: 0.87rem;
+}
+
+.hint {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+input,
+select,
+button {
+  font: inherit;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+input:focus-visible,
+select:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button.secondary {
+  background: transparent;
+}
+
+button.link {
+  border: 0;
+  padding: 0.2rem 0.4rem;
+  color: var(--muted);
+  background: none;
+}
+
+button.link:hover {
+  color: var(--bad);
+}
+
+button[disabled] {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+th {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table td.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.input-table input {
+  width: 100%;
+}
+
+.input-table td {
+  border-bottom: 0;
+  padding: 0.3rem 0.3rem 0.3rem 0;
+}
+
+.actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+}
+
+.status {
+  margin: 0.8rem 0 0;
+  color: var(--muted);
+  min-height: 1.2em;
+}
+
+.status.error {
+  color: var(--bad);
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+}
+
+.stat {
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.stat .label {
+  display: block;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.stat .value {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 1.25rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.value.good {
+  color: var(--good);
+}
+
+.value.bad {
+  color: var(--bad);
+}
+
+.pill {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.pill.yes {
+  background: color-mix(in srgb, var(--good) 18%, transparent);
+  color: var(--good);
+}
+
+.pill.no {
+  background: color-mix(in srgb, var(--bad) 18%, transparent);
+  color: var(--bad);
+}
+
+.warning {
+  margin-top: 1rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--warn-line);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+  font-size: 0.9rem;
+}
+
+.scroll-x {
+  overflow-x: auto;
+}
+
+.provenance {
+  color: var(--muted);
+  font-size: 0.83rem;
+  max-width: 70ch;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.chart-bar-flow {
+  fill: var(--accent);
+}
+
+.chart-bar-liability {
+  fill: none;
+  stroke: var(--bad);
+  stroke-width: 2;
+}
+
+.chart-axis {
+  stroke: var(--line);
+}
+
+.chart-label {
+  fill: var(--muted);
+  font-size: 10px;
+}
