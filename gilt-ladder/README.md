@@ -206,6 +206,27 @@ The gilt universe also warns once its DMO export is more than 180 days old. A
 stale committed file is indistinguishable from a fresh one from the outside, and
 a gilt issued since the last export simply cannot be selected.
 
+## Gilts you already own
+
+Nobody starts from cash. Give the app a list of `{ isin, nominal }` and those
+holdings' coupons and redemptions are credited against the liabilities *before*
+the backward pass runs, so the ladder is constructed against the **shortfall**
+rather than against the whole liability.
+
+They are kept apart from the holdings to buy, because `holdings` is a dealing
+list and nothing you already own belongs in it. They are valued but never
+costed: `totals.cost` stays the cash that still has to be spent, and
+`totals.existingValue` is what is already committed.
+
+They get no Accrued Income Scheme relief. Relief attaches to accrued interest
+paid at a purchase, and these were bought on some earlier date this application
+knows nothing about.
+
+A holding whose ISIN matches nothing in the universe is **reported, not
+ignored** — it may have redeemed, or be index-linked, both of which are outside
+what this models, and silently dropping it would overstate what still needs
+buying.
+
 ## The ladder algorithm
 
 Backward cash-flow matching, the classic dedicated-portfolio construction.
@@ -243,7 +264,7 @@ records the runner-up for each rung so the gap is visible.
 
 | Route | Purpose |
 |---|---|
-| `POST /gilt-ladder/api/ladder` | Build a ladder. Body: `liabilities[]`, `portfolioValue`, `marginalRate`, `lotSize`, `bufferBusinessDays`, `observedPrices[]`, `accruedIncomeScheme` |
+| `POST /gilt-ladder/api/ladder` | Build a ladder. Body: `liabilities[]`, `portfolioValue`, `marginalRate`, `lotSize`, `bufferBusinessDays`, `observedPrices[]`, `existingHoldings[]`, `accruedIncomeScheme` |
 | `GET /gilt-ladder/api/universe` | The gilt universe and whether it is real or sample |
 | `GET /gilt-ladder/api/curve` | The cached curve, its date, and whether it is stale |
 | `GET /gilt-ladder/api/health` | Liveness; 503 if the universe failed validation |

@@ -14,6 +14,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_LIABILITIES = 200;
 const MAX_OBSERVED_PRICES = 200;
+const MAX_EXISTING_HOLDINGS = 200;
 // A conventional gilt's clean price per £100 nominal. The band is wide on
 // purpose - a 0.5% 2061 has traded in the 20s and a high-coupon long gilt can
 // sit well above par - but it still catches the two mistakes that matter: a
@@ -128,6 +129,26 @@ function validateRequest(body) {
     problems.push('lotSize must be positive');
   }
 
+  if (body.existingHoldings != null) {
+    if (!Array.isArray(body.existingHoldings)) {
+      problems.push('existingHoldings must be an array');
+    } else if (body.existingHoldings.length > MAX_EXISTING_HOLDINGS) {
+      problems.push(`at most ${MAX_EXISTING_HOLDINGS} existing holdings`);
+    } else {
+      body.existingHoldings.forEach((h, i) => {
+        const where = `existingHoldings[${i}]`;
+        if (!h || typeof h !== 'object') {
+          problems.push(`${where}: not an object`);
+          return;
+        }
+        if (!ISIN_RE.test(String(h.isin).trim().toUpperCase())) {
+          problems.push(`${where}: invalid ISIN ${JSON.stringify(h.isin)}`);
+        }
+        if (!(Number(h.nominal) > 0)) problems.push(`${where}: nominal must be positive`);
+      });
+    }
+  }
+
   if (body.accruedIncomeScheme != null && !['auto', true, false].includes(body.accruedIncomeScheme)) {
     problems.push("accruedIncomeScheme must be 'auto', true or false");
   }
@@ -194,6 +215,7 @@ async function handleLadder(req, res) {
       bufferBusinessDays:
         body.bufferBusinessDays == null ? DEFAULTS.bufferBusinessDays : Number(body.bufferBusinessDays),
       observedPrices: body.observedPrices || [],
+      existingHoldings: body.existingHoldings || [],
       accruedIncomeScheme:
         body.accruedIncomeScheme == null ? DEFAULTS.accruedIncomeScheme : body.accruedIncomeScheme,
       settlement,

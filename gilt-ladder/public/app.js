@@ -98,6 +98,50 @@ function addPriceRow(isin = '', clean = '') {
   tbody.appendChild(tr);
 }
 
+function addOwnedRow(isin = '', nominal = '') {
+  const tbody = $('owned').querySelector('tbody');
+  const tr = document.createElement('tr');
+
+  const isinCell = document.createElement('td');
+  const isinInput = document.createElement('input');
+  isinInput.type = 'text';
+  isinInput.className = 'owned-isin';
+  isinInput.setAttribute('list', 'universe-isins');
+  isinInput.placeholder = 'GB00B16NNR78';
+  isinInput.value = isin;
+  isinCell.appendChild(isinInput);
+
+  const nominalCell = document.createElement('td');
+  const nominalInput = document.createElement('input');
+  nominalInput.type = 'number';
+  nominalInput.min = '0';
+  nominalInput.step = '100';
+  nominalInput.className = 'owned-nominal';
+  nominalInput.placeholder = '10000';
+  nominalInput.value = nominal;
+  nominalCell.appendChild(nominalInput);
+
+  const removeCell = document.createElement('td');
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'link';
+  remove.textContent = 'Remove';
+  remove.addEventListener('click', () => tr.remove());
+  removeCell.appendChild(remove);
+
+  tr.append(isinCell, nominalCell, removeCell);
+  tbody.appendChild(tr);
+}
+
+function readExistingHoldings() {
+  return [...document.querySelectorAll('#owned tbody tr')]
+    .map((tr) => ({
+      isin: tr.querySelector('.owned-isin').value.trim().toUpperCase(),
+      nominal: Number(tr.querySelector('.owned-nominal').value),
+    }))
+    .filter((h) => h.isin && h.nominal > 0);
+}
+
 // Only fully-completed rows are sent. A half-typed row is a row in progress,
 // not a validation error to shout about.
 function readObservedPrices() {
@@ -134,7 +178,10 @@ function renderSummary(result) {
   const { totals, fullyFunded } = result;
   const cards = [
     stat('Total liabilities', gbp(totals.liabilities)),
-    stat('Cost to fund', gbp(totals.cost)),
+    stat('Cost to fund', gbp(totals.cost), '', 'What still has to be bought, at these prices.'),
+    ...(totals.existingCount
+      ? [stat('Already owned', gbp(totals.existingValue), '', `${totals.existingCount} holding(s), valued not costed.`)]
+      : []),
     stat('Holdings', String(totals.holdingCount)),
     stat('Fully funded', fullyFunded ? 'Yes' : 'No', fullyFunded ? 'good' : 'bad'),
   ];
@@ -196,6 +243,24 @@ function renderHoldings(holdings) {
         }</td>
         <td class="num">${gbpExact(h.cost)}</td>
         <td>${shortDate(h.fundsLiability)}</td>
+      </tr>`
+    )
+    .join('');
+}
+
+function renderExisting(existing) {
+  $('existing-panel').hidden = !existing.length;
+  if (!existing.length) return;
+
+  $('existing').querySelector('tbody').innerHTML = existing
+    .map(
+      (h) => `<tr>
+        <td>${h.name}</td>
+        <td><code>${h.isin}</code></td>
+        <td class="num">${h.coupon.toFixed(3)}%</td>
+        <td>${shortDate(h.redemption)}</td>
+        <td class="num">${h.nominal.toLocaleString('en-GB')}</td>
+        <td class="num">${h.value == null ? '—' : gbpExact(h.value)}</td>
       </tr>`
     )
     .join('');
@@ -347,6 +412,7 @@ async function build() {
         lotSize: Number($('lot-size').value),
         bufferBusinessDays: Number($('buffer').value),
         observedPrices: readObservedPrices(),
+        existingHoldings: readExistingHoldings(),
         // 'auto' rather than true: the scheme only catches holdings over
         // £5,000 nominal, and the server decides that from the ladder it builds.
         accruedIncomeScheme: $('ais').checked ? 'auto' : false,
@@ -363,6 +429,7 @@ async function build() {
     renderSummary(body);
     renderHoldings(body.holdings);
     renderCoverage(body.coverage);
+    renderExisting(body.existing);
     renderSelection(body.diagnostics.selection);
     renderChart(body);
     renderProvenance(body.provenance, body.pricing, body.tax);
@@ -386,6 +453,7 @@ let lastHoldings = [];
 async function init() {
   $('add-liability').addEventListener('click', () => addLiabilityRow());
   $('add-price').addEventListener('click', () => addPriceRow());
+  $('add-owned').addEventListener('click', () => addOwnedRow());
   $('build').addEventListener('click', build);
   $('price-ladder').addEventListener('click', () => {
     for (const holding of lastHoldings) addPriceRow(holding.isin, holding.cleanPrice.toFixed(3));

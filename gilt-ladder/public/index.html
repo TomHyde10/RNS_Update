@@ -82,6 +82,33 @@
       </section>
 
       <section class="panel">
+        <details id="holdings-panel">
+          <summary>
+            <h2>Gilts you already own</h2>
+            <span class="hint">optional &mdash; the ladder then funds only the shortfall</span>
+          </summary>
+          <p class="hint block">
+            Coupons and redemptions from gilts you already hold are credited against your
+            liabilities before anything is bought, so the dealing list below covers only what is
+            left. They are valued but never costed &mdash; that money is already committed.
+          </p>
+          <table id="owned" class="input-table">
+            <thead>
+              <tr>
+                <th>ISIN</th>
+                <th>Nominal (&pound;)</th>
+                <th><span class="sr-only">Remove</span></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <div class="actions">
+            <button id="add-owned" type="button" class="secondary">Add holding</button>
+          </div>
+        </details>
+      </section>
+
+      <section class="panel">
         <details id="prices-panel">
           <summary>
             <h2>Observed prices</h2>
@@ -145,6 +172,28 @@
                   <th class="num">Mod. duration</th>
                   <th class="num">Cost (&pound;)</th>
                   <th>Funds</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel" id="existing-panel" hidden>
+          <h2>Already owned</h2>
+          <p class="hint block">
+            Counted towards the liabilities, not towards the cost to fund.
+          </p>
+          <div class="scroll-x">
+            <table id="existing" class="data-table">
+              <thead>
+                <tr>
+                  <th>Gilt</th>
+                  <th>ISIN</th>
+                  <th class="num">Coupon</th>
+                  <th>Redeems</th>
+                  <th class="num">Nominal (&pound;)</th>
+                  <th class="num">Value (&pound;)</th>
                 </tr>
               </thead>
               <tbody></tbody>

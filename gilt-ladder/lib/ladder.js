@@ -217,6 +217,62 @@ function buildLadder(request) {
   const fundBy = liabilities.map((l) => toISO(addBusinessDays(l.date, -bufferBusinessDays)));
   const residual = liabilities.map((l) => l.amount);
 
+  // Credit the flow to the earliest liability the money can still reach.
+  // Shared by gilts already owned and by the rungs bought below, so both sides
+  // of the portfolio are applied under exactly the same rule.
+  const creditAgainstLiabilities = (flows) => {
+    for (const flow of flows) {
+      const target = liabilities.findIndex((l, j) => flow.date <= fundBy[j]);
+      if (target === -1) continue; // arrives too late to fund anything - surplus
+      residual[target] -= flow.amount;
+    }
+  };
+
+  // Gilts already owned. Their coupons and redemptions fund liabilities exactly
+  // as a bought rung's would, so crediting them first means the ladder is
+  // constructed against the SHORTFALL rather than against the whole liability -
+  // which is the question anyone who already holds gilts is actually asking.
+  //
+  // No Accrued Income Scheme relief: relief attaches to accrued interest paid
+  // at a purchase, and these were bought at some earlier date this application
+  // knows nothing about.
+  const byIsin = new Map(universe.map((g) => [g.isin, g]));
+  const existing = [];
+  const unknownHoldings = [];
+  for (const entry of request.existingHoldings || []) {
+    if (!entry || entry.isin == null) continue;
+    const isin = String(entry.isin).trim().toUpperCase();
+    const nominal = Number(entry.nominal);
+    if (!(nominal > 0)) continue;
+
+    const gilt = byIsin.get(isin);
+    if (!gilt) {
+      unknownHoldings.push(isin);
+      continue;
+    }
+
+    const priced = netCostPerUnit(gilt, settlement, curve, marginalRate, {
+      observedClean: observedPrices.get(isin) ?? null,
+    });
+    const flows = holdingFlows(gilt, nominal, settlement, marginalRate, 0);
+    creditAgainstLiabilities(flows);
+
+    existing.push({
+      isin,
+      name: gilt.name,
+      coupon: gilt.coupon,
+      redemption: gilt.redemption,
+      nominal,
+      cleanPrice: priced ? priced.clean : null,
+      accrued: priced ? priced.accrued : null,
+      priceSource: priced ? priced.source : null,
+      // What it is worth now, not what it cost: this is not money to be spent,
+      // it is money already committed, and it must not land in totals.cost.
+      value: priced ? (nominal / 100) * priced.dirty : null,
+      aisRelief: 0,
+    });
+  }
+
   const holdings = [];
   const selection = [];
   const unfunded = [];
@@ -303,11 +359,7 @@ function buildLadder(request) {
     // Credit every flow this holding produces against the earliest liability
     // the money can still reach. Processing backwards means the redemption
     // lands on this rung and the coupons fall to earlier ones.
-    for (const flow of flows) {
-      const target = liabilities.findIndex((l, j) => flow.date <= fundBy[j]);
-      if (target === -1) continue; // arrives too late to fund anything - surplus
-      residual[target] -= flow.amount;
-    }
+    creditAgainstLiabilities(flows);
   }
 
   // The scheme only catches an individual holding over £5,000 nominal of
@@ -331,13 +383,15 @@ function buildLadder(request) {
     settlement,
     options,
     accruedIncomeScheme,
-    pricing: { observed: observedPrices.size, ignored: ignoredPrices },
+    existing,
+    pricing: { observed: observedPrices.size, ignored: ignoredPrices, unknownHoldings },
   });
 }
 
 function summarise({
   liabilities,
   holdings,
+  existing,
   selection,
   unfunded,
   residual,
@@ -352,8 +406,11 @@ function summarise({
   // Rebuild the full cash flow calendar from the holdings actually bought, so
   // the coverage report is derived from the portfolio rather than from the
   // running residuals the construction used.
+  // Gilts already owned throw off exactly the same kind of cash as ones bought
+  // today, so the coverage report has to see both. They differ only in that
+  // they cost nothing now.
   const calendar = new Map();
-  for (const holding of holdings) {
+  for (const holding of [...existing, ...holdings]) {
     const gilt = { name: holding.name, coupon: holding.coupon, redemption: holding.redemption };
     for (const flow of holdingFlows(gilt, holding.nominal, settlement, marginalRate, holding.aisRelief)) {
       const entry = calendar.get(flow.date) || { date: flow.date, amount: 0, gross: 0 };
@@ -429,6 +486,18 @@ function summarise({
     });
   }
 
+  // A holding that matched nothing has been left out of the funding entirely,
+  // which quietly overstates what still needs buying. Never silent.
+  for (const isin of pricing.unknownHoldings) {
+    warnings.push({
+      type: 'holding-ignored',
+      isin,
+      message:
+        `You said you hold ${isin}, but no gilt in the universe has that ISIN - it may have ` +
+        'redeemed, or be index-linked, which this application excludes. It was not counted.',
+    });
+  }
+
   return {
     settlement,
     curveDate: curve.date,
@@ -442,6 +511,9 @@ function summarise({
       totalNominal: holdings.reduce((sum, h) => sum + h.nominal, 0),
     },
     holdings: holdings.sort((a, b) => a.redemption.localeCompare(b.redemption)),
+    // Kept apart from `holdings` on purpose: `holdings` is a dealing list, and
+    // nothing in it should be something the user already owns.
+    existing: existing.sort((a, b) => a.redemption.localeCompare(b.redemption)),
     coverage,
     cashflows: flows,
     totals: {
@@ -453,6 +525,10 @@ function summarise({
       surplus: portfolioValue == null ? null : portfolioValue - totalCost,
       residualCash: leftover,
       holdingCount: holdings.length,
+      // What gilts already held are worth today. Not part of `cost`, which is
+      // cash that still has to be spent.
+      existingValue: existing.reduce((sum, h) => sum + (h.value || 0), 0),
+      existingCount: existing.length,
     },
     fullyFunded: shortfalls.length === 0 && unfunded.length === 0,
     warnings,

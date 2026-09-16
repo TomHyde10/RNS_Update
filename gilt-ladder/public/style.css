@@ -287,7 +287,8 @@ th {
 
 /* The observed-price panel is collapsed by default: it is optional, and the
    page should not open on a table most sessions never fill in. */
-#prices-panel > summary {
+#prices-panel > summary,
+#holdings-panel > summary {
   cursor: pointer;
   display: flex;
   align-items: baseline;
@@ -295,12 +296,14 @@ th {
   flex-wrap: wrap;
 }
 
-#prices-panel > summary > h2 {
+#prices-panel > summary > h2,
+#holdings-panel > summary > h2 {
   display: inline;
   margin: 0;
 }
 
-#prices-panel[open] > summary {
+#prices-panel[open] > summary,
+#holdings-panel[open] > summary {
   margin-bottom: 0.4rem;
 }
 

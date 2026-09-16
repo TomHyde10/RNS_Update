@@ -38,7 +38,7 @@ the tax logic the app's headline claim rests on (2), before adding scope.
       rebate. `taxable = coupon - accruedInterest(gilt, settlement)`, and the
       existing negative-in-xd sign convention already makes that work with no
       special case. Applies above the GBP 5,000 nominal threshold.
-- [ ] **5. Existing holdings as an input.** Credit gilts already owned against
+- [x] **5. Existing holdings as an input.** Credit gilts already owned against
       the liabilities before the backward pass, so the ladder funds the
       shortfall rather than the whole liability.
 - [ ] **10. Liability series generator.** Repeat/frequency/count expansion for

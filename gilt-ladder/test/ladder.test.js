@@ -466,3 +466,104 @@ test('the reported cash flows carry the same relief selection used', () => {
   assert.equal(reported.length, expected.length);
   assert.ok(Math.abs(reported[0].amount - expected[0].amount) < 1e-9, 'first flow must carry the relief');
 });
+
+// --- Gilts already owned ---------------------------------------------------
+//
+// Nobody starts from cash. Crediting what is already held before the backward
+// pass means the ladder is built against the shortfall, which is the question
+// someone holding gilts is actually asking.
+
+test('an existing holding reduces what has to be bought', () => {
+  const liabilities = [
+    { date: '2028-09-30', amount: 20000 },
+    { date: '2030-09-30', amount: 20000 },
+  ];
+
+  const fromCash = buildLadder({ ...base, liabilities });
+  const withHolding = buildLadder({
+    ...base,
+    liabilities,
+    existingHoldings: [{ isin: 'TEST00000001', nominal: 15000 }],
+  });
+
+  assert.ok(withHolding.totals.cost < fromCash.totals.cost, 'owning gilts must cost less to complete');
+  assert.ok(withHolding.fullyFunded, 'and must still fund every liability');
+  for (const c of withHolding.coverage) assert.ok(c.covered);
+});
+
+// The dealing list must never contain something the user already owns.
+test('existing holdings are reported apart from the ones to buy', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [{ date: '2030-09-30', amount: 20000 }],
+    existingHoldings: [{ isin: 'TEST00000001', nominal: 5000 }],
+  });
+
+  assert.equal(result.existing.length, 1);
+  assert.equal(result.existing[0].isin, 'TEST00000001');
+  assert.ok(result.existing[0].value > 0, 'what it is worth now');
+  assert.equal(result.totals.existingCount, 1);
+  assert.ok(!result.holdings.some((h) => h.isin === 'TEST00000001' && h.nominal === 5000));
+});
+
+// Money already committed is not money still to be spent.
+test('the value of an existing holding does not land in the cost to fund', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [{ date: '2035-09-30', amount: 40000 }],
+    existingHoldings: [{ isin: 'TEST00000001', nominal: 10000 }],
+  });
+
+  assert.ok(result.totals.existingValue > 0);
+  const boughtCost = result.holdings.reduce((sum, h) => sum + h.cost, 0);
+  assert.ok(Math.abs(result.totals.cost - boughtCost) < 1e-9, 'cost is the dealing list and nothing else');
+});
+
+// An existing holding's coupons are cash like any other, so they must appear in
+// the calendar the coverage table is checked against.
+test('an existing holding contributes to the cash flow calendar', () => {
+  const without = buildLadder({ ...base, liabilities: [{ date: '2030-09-30', amount: 20000 }] });
+  const with_ = buildLadder({
+    ...base,
+    liabilities: [{ date: '2030-09-30', amount: 20000 }],
+    existingHoldings: [{ isin: 'TEST00000005', nominal: 20000 }], // 2% to 2035, coupons only
+  });
+  assert.ok(with_.cashflows.length > without.cashflows.length, 'its coupons must show up');
+});
+
+// Relief attaches to accrued paid at a purchase. These were bought at some
+// earlier date this application knows nothing about.
+test('an existing holding gets no Accrued Income Scheme relief', () => {
+  const result = buildLadder({
+    ...base,
+    marginalRate: 0.45,
+    liabilities: [{ date: '2035-09-30', amount: 40000 }],
+    existingHoldings: [{ isin: 'TEST00000001', nominal: 10000 }],
+  });
+  assert.equal(result.existing[0].aisRelief, 0);
+  assert.equal(result.tax.accruedIncomeScheme, true, 'the bought rungs still get it');
+});
+
+test('a holding in a gilt that is not in the universe is reported, not swallowed', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [{ date: '2030-09-30', amount: 20000 }],
+    existingHoldings: [{ isin: 'TEST00009999', nominal: 50000 }],
+  });
+
+  const warning = result.warnings.find((w) => w.type === 'holding-ignored');
+  assert.ok(warning, 'expected a holding-ignored warning');
+  assert.match(warning.message, /TEST00009999/);
+  assert.equal(result.existing.length, 0);
+});
+
+test('a quoted price values an existing holding too', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [{ date: '2030-09-30', amount: 20000 }],
+    existingHoldings: [{ isin: 'TEST00000001', nominal: 10000 }],
+    observedPrices: [{ isin: 'TEST00000001', clean: 80 }],
+  });
+  assert.equal(result.existing[0].priceSource, 'observed');
+  assert.ok(Math.abs(result.existing[0].cleanPrice - 80) < 1e-9);
+});
