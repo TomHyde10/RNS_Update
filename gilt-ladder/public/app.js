@@ -314,6 +314,36 @@ function renderExisting(existing) {
     .join('');
 }
 
+function renderTax(tax) {
+  $('tax-panel').hidden = !tax.byYear.length;
+  if (!tax.byYear.length) return;
+
+  $('tax-years').querySelector('tbody').innerHTML = tax.byYear
+    .map(
+      (row) => `<tr>
+        <td>${row.taxYear}${row.estimated ? ' <span class="pill derived" title="No published bands for this year - the most recent are held flat">estimated</span>' : ''}</td>
+        <td class="num">${gbpExact(row.coupons)}</td>
+        <td class="num">${gbpExact(row.zeroRated)}</td>
+        <td class="num">${gbpExact(row.taxable)}</td>
+        <td class="num">${gbpExact(row.tax)}</td>
+        <td class="num">${pct(row.effectiveRate, 1)}</td>
+      </tr>`
+    )
+    .join('');
+
+  const notes = [
+    `Total coupon tax ${gbp(tax.total)} on ${gbp(tax.couponIncome)} of coupon income.`,
+    tax.otherIncome == null
+      ? 'No other income stated, so the starting rate for savings is assumed unavailable - the cautious assumption, which can only overstate the tax.'
+      : `Assuming ${gbp(tax.otherIncome)} of other taxable income.`,
+    tax.estimatedYears.length
+      ? `Allowances for ${tax.estimatedYears.length} later tax year(s) are not published; the ${tax.allowancesCheckedAgainst} figures are held flat.`
+      : '',
+    tax.accruedIncomeScheme ? 'Accrued Income Scheme relief applied to each first coupon.' : '',
+  ];
+  $('tax-note').textContent = notes.filter(Boolean).join(' ');
+}
+
 function renderSelection(selection) {
   const tbody = $('selection').querySelector('tbody');
   // buildLadder works backwards, so `selection` arrives latest-first.
@@ -461,6 +491,7 @@ async function build() {
         bufferBusinessDays: Number($('buffer').value),
         observedPrices: readObservedPrices(),
         existingHoldings: readExistingHoldings(),
+        otherIncome: $('other-income').value === '' ? null : Number($('other-income').value),
         // 'auto' rather than true: the scheme only catches holdings over
         // £5,000 nominal, and the server decides that from the ladder it builds.
         accruedIncomeScheme: $('ais').checked ? 'auto' : false,
@@ -478,6 +509,7 @@ async function build() {
     renderHoldings(body.holdings);
     renderCoverage(body.coverage);
     renderExisting(body.existing);
+    renderTax(body.tax);
     renderSelection(body.diagnostics.selection);
     renderChart(body);
     renderProvenance(body.provenance, body.pricing, body.tax);
@@ -546,6 +578,7 @@ function readPlan() {
     marginalRate: Number($('marginal-rate').value),
     lotSize: Number($('lot-size').value),
     bufferBusinessDays: Number($('buffer').value),
+    otherIncome: $('other-income').value === '' ? null : Number($('other-income').value),
     accruedIncomeScheme: $('ais').checked ? 'auto' : false,
   };
 }
@@ -555,6 +588,7 @@ function writePlan(plan) {
   $('marginal-rate').value = String(plan.marginalRate == null ? 0 : plan.marginalRate);
   if (plan.lotSize != null) $('lot-size').value = plan.lotSize;
   if (plan.bufferBusinessDays != null) $('buffer').value = plan.bufferBusinessDays;
+  $('other-income').value = plan.otherIncome == null ? '' : plan.otherIncome;
   $('ais').checked = plan.accruedIncomeScheme !== false;
 
   for (const table of ['liabilities', 'prices', 'owned']) {

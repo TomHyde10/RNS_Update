@@ -27,6 +27,7 @@ const {
 } = require('./bondMath');
 const { discountTo } = require('./curve');
 const { expand: expandLiabilities } = require('./liabilities');
+const { taxYearOf, taxByYear, ratesByYear, checkedAgainst: taxCheckedAgainst } = require('./tax');
 
 const DEFAULTS = {
   // Cash must land this many business days before the liability it funds.
@@ -76,6 +77,24 @@ const afterTaxAmount = (flow, marginalRate) => flow.principal + flow.coupon * (1
 // application cannot see, and stopping at zero is the conservative direction.
 const AIS_NOMINAL_THRESHOLD = 5000;
 
+// Passes allowed while the banded tax rate settles. The rate a coupon bears
+// depends on how much coupon income the year carries, which depends on how much
+// was bought, which depends on the rate - so it is solved by iteration rather
+// than in closed form. It converges in two or three passes in practice; the cap
+// is there so a pathological universe cannot spin.
+const MAX_TAX_PASSES = 5;
+
+// Rates agree closely enough to stop. A basis point of blended rate is far
+// below the resolution of anything this reports.
+function ratesConverged(before, after) {
+  if (!before) return false;
+  if (before.size !== after.size) return false;
+  for (const [year, rate] of after) {
+    if (Math.abs((before.get(year) ?? 0) - rate) > 1e-4) return false;
+  }
+  return true;
+}
+
 function taxableCoupon(flow, index, aisRelief) {
   if (index !== 0 || !aisRelief) return flow.coupon;
   return Math.max(0, flow.coupon - aisRelief);
@@ -87,13 +106,23 @@ function taxableCoupon(flow, index, aisRelief) {
 const afterTaxAmountAt = (flow, index, marginalRate, aisRelief) =>
   flow.principal + flow.coupon - taxableCoupon(flow, index, aisRelief) * marginalRate;
 
+// A rate may be a flat number or a function of the payment date. It is a
+// function once the savings allowances are modelled, because the rate a coupon
+// bears then depends on which TAX YEAR it lands in and how much other coupon
+// income landed there with it - see lib/tax.js.
+const rateResolver = (rate) => (typeof rate === 'function' ? rate : () => rate);
+
 // The flows a given nominal holding delivers, after tax, keyed by payment date.
-function holdingFlows(gilt, nominal, settlement, marginalRate, aisRelief = 0) {
+function holdingFlows(gilt, nominal, settlement, rate, aisRelief = 0) {
+  const rateAt = rateResolver(rate);
   return cashflows(gilt, settlement).map((flow, index) => ({
     date: flow.paidOn,
     couponDate: flow.couponDate,
-    amount: (nominal / 100) * afterTaxAmountAt(flow, index, marginalRate, aisRelief),
+    amount: (nominal / 100) * afterTaxAmountAt(flow, index, rateAt(flow.paidOn), aisRelief),
     gross: (nominal / 100) * flow.amount,
+    // The coupon leg alone, in pounds. Redemption is CGT-exempt for
+    // individuals, so this is the only leg the allowances ever see.
+    grossCoupon: (nominal / 100) * flow.coupon,
     isRedemption: flow.principal > 0,
   }));
 }
@@ -112,6 +141,7 @@ function holdingFlows(gilt, nominal, settlement, marginalRate, aisRelief = 0) {
 // two is the honest construction - the leg you can observe is observed, the leg
 // you cannot is still modelled - and `source` records which.
 function netCostPerUnit(gilt, settlement, curve, marginalRate, { observedClean = null, accruedIncomeScheme = false } = {}) {
+  const rateAt = rateResolver(marginalRate);
   const priced = priceFromCurve(gilt, settlement, curve);
   const flows = priced.flows;
   if (!flows.length) return null;
@@ -122,7 +152,7 @@ function netCostPerUnit(gilt, settlement, curve, marginalRate, { observedClean =
 
   const last = flows.length - 1;
   const redemption = flows[last];
-  const delivered = afterTaxAmountAt(redemption, last, marginalRate, aisRelief);
+  const delivered = afterTaxAmountAt(redemption, last, rateAt(redemption.paidOn), aisRelief);
   if (delivered <= 0) return null;
 
   // Accrued is the buyer's either way, so an observed CLEAN price becomes the
@@ -133,7 +163,7 @@ function netCostPerUnit(gilt, settlement, curve, marginalRate, { observedClean =
   let pvIntermediate = 0;
   for (let i = 0; i < last; i++) {
     pvIntermediate +=
-      afterTaxAmountAt(flows[i], i, marginalRate, aisRelief) *
+      afterTaxAmountAt(flows[i], i, rateAt(flows[i].paidOn), aisRelief) *
       discountTo(curve, yearsBetween(settlement, flows[i].paidOn));
   }
 
@@ -201,6 +231,21 @@ function buildLadder(request) {
   // multiplied by zero.
   const aisMode = options.accruedIncomeScheme;
   const accruedIncomeScheme = marginalRate > 0 && (aisMode === 'auto' || aisMode === true);
+
+  // Savings allowances make the rate on a coupon depend on its tax year, so
+  // what selection is priced against is a rate PER YEAR rather than one
+  // number. The first pass has nothing to go on and uses the flat marginal
+  // rate; each later pass re-prices against the blended rates the previous
+  // ladder's own coupon income implied.
+  const taxRates = options.taxRates || null;
+  const taxPass = options.taxPass || 0;
+  const otherIncome = options.otherIncome == null ? null : Number(options.otherIncome);
+  const rateFor = taxRates
+    ? (date) => {
+        const rate = taxRates.get(taxYearOf(date));
+        return rate == null ? marginalRate : rate;
+      }
+    : marginalRate;
 
   const settlement = toISO(
     options.settlement || addBusinessDays(curve.date, options.settlementBusinessDays)
@@ -270,10 +315,10 @@ function buildLadder(request) {
       continue;
     }
 
-    const priced = netCostPerUnit(gilt, settlement, curve, marginalRate, {
+    const priced = netCostPerUnit(gilt, settlement, curve, rateFor, {
       observedClean: observedPrices.get(isin) ?? null,
     });
-    const flows = holdingFlows(gilt, nominal, settlement, marginalRate, 0);
+    const flows = holdingFlows(gilt, nominal, settlement, rateFor, 0);
     creditAgainstLiabilities(flows);
 
     existing.push({
@@ -310,7 +355,7 @@ function buildLadder(request) {
     const priced = universe
       .map((gilt) => ({
         gilt,
-        cost: netCostPerUnit(gilt, settlement, curve, marginalRate, {
+        cost: netCostPerUnit(gilt, settlement, curve, rateFor, {
           observedClean: observedPrices.get(gilt.isin) ?? null,
           accruedIncomeScheme,
         }),
@@ -336,7 +381,7 @@ function buildLadder(request) {
     const exactNominal = (residual[i] / chosen.cost.delivered) * 100;
     const nominal = Math.ceil(exactNominal / lotSize) * lotSize;
 
-    const flows = holdingFlows(chosen.gilt, nominal, settlement, marginalRate, chosen.cost.aisRelief);
+    const flows = holdingFlows(chosen.gilt, nominal, settlement, rateFor, chosen.cost.aisRelief);
     const cost = (nominal / 100) * chosen.cost.dirty;
 
     holdings.push({
@@ -386,10 +431,48 @@ function buildLadder(request) {
   // the tax treatment depends on how much gets bought, so 'auto' resolves it
   // by building once and rebuilding if the answer came out too small to
   // qualify. It terminates: the second pass is pinned to an explicit false.
+  // The coupon leg every allowance calculation works from: actual pounds, by
+  // payment date, across everything held - bought and already owned alike,
+  // since HMRC does not care which. AIS relief comes off the first coupon of
+  // each bought holding, keeping the banded calculation consistent with the
+  // relief selection was already made under.
+  const grossCouponFlows = () => {
+    const out = [];
+    for (const holding of [...existing, ...holdings]) {
+      const gilt = { name: holding.name, coupon: holding.coupon, redemption: holding.redemption };
+      const flows = holdingFlows(gilt, holding.nominal, settlement, rateFor, holding.aisRelief);
+      let first = true;
+      for (const flow of flows) {
+        if (flow.grossCoupon <= 0) continue;
+        const relief = first ? (holding.nominal / 100) * (holding.aisRelief || 0) : 0;
+        out.push({ date: flow.date, coupon: Math.max(0, flow.grossCoupon - relief) });
+        first = false;
+      }
+    }
+    return out;
+  };
+
   if (aisMode === 'auto' && accruedIncomeScheme) {
     const totalNominal = holdings.reduce((sum, h) => sum + h.nominal, 0);
     if (totalNominal <= AIS_NOMINAL_THRESHOLD) {
-      return buildLadder({ ...request, settlement, accruedIncomeScheme: false });
+      return buildLadder({ ...request, settlement, accruedIncomeScheme: false, taxRates, taxPass });
+    }
+  }
+
+  // Re-price against the rates this ladder's own coupon income implies, until
+  // they stop moving. Nothing to solve at a 0% marginal rate: every band is
+  // 0% already.
+  const taxRows = marginalRate > 0 ? taxByYear(grossCouponFlows(), { marginalRate, otherIncome }) : [];
+  if (marginalRate > 0) {
+    const nextRates = ratesByYear(taxRows);
+    if (!ratesConverged(taxRates, nextRates) && taxPass + 1 < MAX_TAX_PASSES) {
+      return buildLadder({
+        ...request,
+        settlement,
+        accruedIncomeScheme: aisMode === 'auto' ? accruedIncomeScheme : aisMode,
+        taxRates: nextRates,
+        taxPass: taxPass + 1,
+      });
     }
   }
 
@@ -403,6 +486,9 @@ function buildLadder(request) {
     options,
     accruedIncomeScheme,
     existing,
+    taxRows,
+    taxPasses: taxPass + 1,
+    otherIncome,
     pricing: { observed: observedPrices.size, ignored: ignoredPrices, unknownHoldings },
   });
 }
@@ -417,6 +503,9 @@ function summarise({
   settlement,
   options,
   accruedIncomeScheme,
+  taxRows,
+  taxPasses,
+  otherIncome,
   pricing,
 }) {
   const { curve, portfolioValue, marginalRate } = options;
@@ -525,9 +614,23 @@ function summarise({
     // changes which gilts get chosen, so it cannot be left implicit.
     tax: {
       marginalRate,
+      otherIncome,
       accruedIncomeScheme,
       nominalThreshold: AIS_NOMINAL_THRESHOLD,
       totalNominal: holdings.reduce((sum, h) => sum + h.nominal, 0),
+      // Coupon income and the tax on it, tax year by tax year. The allowances
+      // make the rate a step function of the year's total, so a single rate
+      // could not describe this - `effectiveRate` per row is what selection
+      // was actually priced against.
+      byYear: taxRows,
+      total: taxRows.reduce((sum, row) => sum + row.tax, 0),
+      couponIncome: taxRows.reduce((sum, row) => sum + row.coupons, 0),
+      // Bands for a year the table does not list are the most recent listed
+      // year's, held flat. A long ladder runs well past what has been
+      // announced, and that has to be visible rather than implied.
+      estimatedYears: taxRows.filter((row) => row.estimated).map((row) => row.taxYear),
+      allowancesCheckedAgainst: taxCheckedAgainst,
+      passes: taxPasses,
     },
     holdings: holdings.sort((a, b) => a.redemption.localeCompare(b.redemption)),
     // Kept apart from `holdings` on purpose: `holdings` is a dealing list, and

@@ -52,7 +52,7 @@ the tax logic the app's headline claim rests on (2), before adding scope.
 - [x] **8. Exports.** CSV dealing list (the artefact you take to a broker),
       CSV cash flow calendar, and an iCal feed of coupon and liability dates
       built on `lib/buildIcs.js`.
-- [ ] **3. Tax years, PSA and the starting rate band.** A flat marginal rate
+- [x] **3. Tax years, PSA and the starting rate band.** A flat marginal rate
       misstates UK savings income: the Personal Savings Allowance and the
       starting rate band make the effective rate a step function, and
       selection is driven by that rate. Requires aggregating flows into tax

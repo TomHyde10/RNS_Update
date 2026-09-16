@@ -623,3 +623,144 @@ test('a supplied option still beats the default', () => {
   });
   assert.equal(result.holdings[0].nominal % 1000, 0);
 });
+
+// --- Savings allowances ----------------------------------------------------
+//
+// The rate a coupon bears depends on how much coupon income its tax year
+// carries, which depends on how much was bought, which depends on the rate. It
+// is solved by iteration, and the point of solving it is that the answer
+// changes: a ladder small enough to sit inside the allowances faces no coupon
+// tax at all, and the low-coupon preference correctly disappears.
+
+const sameDate = [
+  { isin: 'TEST0000000A', name: '0.5% Test 2032', coupon: 0.5, redemption: '2032-03-31' },
+  { isin: 'TEST0000000B', name: '6% Test 2032', coupon: 6, redemption: '2032-03-31' },
+];
+
+test('a ladder inside the allowances bears no coupon tax', () => {
+  const result = buildLadder({
+    ...base,
+    universe: sameDate,
+    marginalRate: 0.4,
+    liabilities: [{ date: '2032-06-30', amount: 5000 }],
+  });
+
+  assert.ok(result.tax.couponIncome > 0, 'it does produce coupons');
+  assert.equal(result.tax.total, 0, 'but they fit inside the Personal Savings Allowance');
+  for (const row of result.tax.byYear) assert.equal(row.effectiveRate, 0);
+});
+
+test('a large ladder is taxed, at less than the marginal rate', () => {
+  const result = buildLadder({
+    ...base,
+    universe: sameDate,
+    marginalRate: 0.4,
+    liabilities: [{ date: '2032-06-30', amount: 400000 }],
+  });
+
+  assert.ok(result.tax.total > 0);
+  const blended = result.tax.total / result.tax.couponIncome;
+  assert.ok(blended > 0 && blended < 0.4, `expected a blended rate under 40%, got ${blended}`);
+});
+
+// The whole point of modelling the allowances rather than merely reporting
+// them. Selection is coupon-neutral before tax (asserted above), so the entire
+// gap between these two gilts is tax - and a ladder small enough to sit inside
+// the Personal Savings Allowance has none, which closes the gap completely.
+test('the allowances can remove the low-coupon preference entirely', () => {
+  const at = (amount) =>
+    buildLadder({
+      ...base,
+      universe: sameDate,
+      marginalRate: 0.2, // a basic-rate taxpayer has a £1,000 PSA
+      liabilities: [{ date: '2032-06-30', amount }],
+    });
+
+  const spread = (result) => {
+    const rung = result.diagnostics.selection[0];
+    return rung.runnerUp.perUnit - rung.perUnit;
+  };
+
+  const small = at(5000);
+  const large = at(400000);
+
+  assert.equal(small.tax.total, 0, 'the small ladder is inside the allowance');
+  assert.ok(spread(small) < 1e-9, 'with no tax the two gilts must cost the same per £1 delivered');
+  assert.ok(large.tax.total > 0);
+  assert.ok(spread(large) > 0, 'once taxed, the low coupon wins again');
+});
+
+// An additional-rate taxpayer has no Personal Savings Allowance and, absent
+// other income, no starting rate band either - so for them the allowances
+// change nothing, at any size. Worth pinning down, since it is the case where
+// the feature correctly does nothing.
+test('an additional-rate taxpayer gets no allowance to absorb coupons', () => {
+  const result = buildLadder({
+    ...base,
+    universe: sameDate,
+    marginalRate: 0.45,
+    liabilities: [{ date: '2032-06-30', amount: 4000 }],
+  });
+  assert.ok(result.tax.total > 0, 'taxed from the first pound of coupon');
+  for (const row of result.tax.byYear) assert.ok(Math.abs(row.effectiveRate - 0.45) < 1e-9);
+});
+
+test('an ISA or SIPP skips the allowance machinery entirely', () => {
+  const result = buildLadder({
+    ...base,
+    marginalRate: 0,
+    liabilities: [{ date: '2030-06-30', amount: 50000 }],
+  });
+  assert.deepEqual(result.tax.byYear, [], 'no bands to apply at 0%');
+  assert.equal(result.tax.total, 0);
+  assert.equal(result.tax.passes, 1, 'and nothing to iterate');
+});
+
+test('the blended rate settles within the pass limit', () => {
+  const result = buildLadder({
+    ...base,
+    marginalRate: 0.45,
+    liabilities: [
+      { date: '2028-09-30', amount: 40000 },
+      { date: '2030-09-30', amount: 40000 },
+      { date: '2035-09-30', amount: 60000 },
+    ],
+  });
+  assert.ok(result.tax.passes >= 2, 'the first pass has nothing to blend from');
+  assert.ok(result.tax.passes <= 5, `expected convergence, took ${result.tax.passes} passes`);
+});
+
+// Stating other income makes the starting rate band available, which can only
+// reduce the tax.
+test('stating a small other income lowers the tax', () => {
+  const liabilities = [{ date: '2035-09-30', amount: 150000 }];
+  const assumed = buildLadder({ ...base, marginalRate: 0.2, liabilities });
+  const stated = buildLadder({ ...base, marginalRate: 0.2, otherIncome: 10000, liabilities });
+
+  assert.ok(stated.tax.total < assumed.tax.total, 'the starting rate band has to bite');
+  assert.equal(stated.tax.otherIncome, 10000);
+});
+
+// A ladder runs well past what has been announced, and that has to be visible.
+test('tax years with no published bands are flagged', () => {
+  const result = buildLadder({
+    ...base,
+    marginalRate: 0.45,
+    liabilities: [{ date: '2035-09-30', amount: 100000 }],
+  });
+  assert.ok(result.tax.estimatedYears.length > 0, 'a 2035 ladder runs past the published table');
+  assert.ok(result.tax.allowancesCheckedAgainst);
+});
+
+// Coupons from gilts already owned are the same income to HMRC.
+test('existing holdings count towards the year\'s coupon income', () => {
+  const liabilities = [{ date: '2035-09-30', amount: 40000 }];
+  const without = buildLadder({ ...base, marginalRate: 0.45, liabilities });
+  const with_ = buildLadder({
+    ...base,
+    marginalRate: 0.45,
+    liabilities,
+    existingHoldings: [{ isin: 'TEST00000004', nominal: 200000 }], // 4% to 2032
+  });
+  assert.ok(with_.tax.couponIncome > without.tax.couponIncome, 'their coupons are taxable too');
+});

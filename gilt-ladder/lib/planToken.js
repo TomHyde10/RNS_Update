@@ -67,6 +67,7 @@ function normalizePlan(input) {
       nominal: num(h && h.nominal),
     })),
     portfolioValue: num(plan.portfolioValue),
+    otherIncome: num(plan.otherIncome),
     marginalRate: num(plan.marginalRate),
     lotSize: num(plan.lotSize),
     bufferBusinessDays: num(plan.bufferBusinessDays),

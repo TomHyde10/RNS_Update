@@ -157,6 +157,10 @@ function validateRequest(body) {
     }
   }
 
+  if (body.otherIncome != null && !(Number(body.otherIncome) >= 0)) {
+    problems.push('otherIncome must be zero or positive');
+  }
+
   if (body.accruedIncomeScheme != null && !['auto', true, false].includes(body.accruedIncomeScheme)) {
     problems.push("accruedIncomeScheme must be 'auto', true or false");
   }
@@ -224,6 +228,7 @@ async function handleLadder(req, res) {
         body.bufferBusinessDays == null ? DEFAULTS.bufferBusinessDays : Number(body.bufferBusinessDays),
       observedPrices: body.observedPrices || [],
       existingHoldings: body.existingHoldings || [],
+      otherIncome: body.otherIncome == null ? null : Number(body.otherIncome),
       accruedIncomeScheme:
         body.accruedIncomeScheme == null ? DEFAULTS.accruedIncomeScheme : body.accruedIncomeScheme,
       settlement,

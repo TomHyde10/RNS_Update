@@ -245,6 +245,57 @@ well as in, against exactly the validation a build request gets, and only
 known fields are carried: without that the request body would be an open
 channel into `buildLadder`'s options.
 
+## Savings allowances and the tax year
+
+A single marginal rate is a poor model of UK savings income. Two allowances sit
+underneath it and make the effective rate a **step function** of how much coupon
+income lands in a tax year:
+
+- the **starting rate for savings** — a £5,000 band at 0%, reduced £1 for £1 by
+  non-savings income above the personal allowance, so a salary well over it
+  leaves none;
+- the **Personal Savings Allowance** — £1,000, £500 or nothing, by taxpayer band.
+
+This is not only a reporting improvement. Gilt selection is driven entirely by
+the rate on coupons, so a ladder small enough to sit inside the allowances faces
+no coupon tax at all — and the low-coupon preference this application exists to
+demonstrate correctly **disappears**. The tests assert exactly that: with no tax,
+two gilts redeeming on the same date cost the same per £1 delivered, whatever
+their coupons.
+
+Coupons are pooled **by tax year** (6 April to 5 April) before any allowance is
+applied, across everything held — bought and already owned alike, since HMRC
+does not care which. Two £600 coupons in one year exceed a £1,000 allowance
+together even though neither does alone.
+
+### Why it is solved by iteration
+
+The rate a coupon bears depends on the year's total coupon income, which depends
+on how much was bought, which depends on the rate. There is no closed form, so
+it is a fixed point: the first pass prices on the flat marginal rate, each later
+pass re-prices against the blended rates the previous ladder's own coupon income
+implied, and it stops when the rates stop moving (two or three passes in
+practice, capped at five). `tax.passes` reports how many it took.
+
+The flows are net of the **blended rate for their own tax year**, so the reported
+tax and the cash flow calendar agree year by year rather than only in total.
+
+### Other income
+
+`otherIncome` is non-savings income — salary, pension, rent. Left unset it is
+treated as enough to exhaust the starting rate band, which is the cautious
+direction: it can only overstate the tax. Stating a modest pension can remove
+the coupon tax entirely.
+
+### The allowances are a config file
+
+`config/taxYears.js`, for the same reason `config/gilts.js` is: nothing
+publishes them in a form a server can fetch and they change once a year at most.
+**Check them against gov.uk before relying on them.** A tax year the table does
+not list falls back to the most recent one it does, held flat — a ladder runs
+well past what has been announced — and every such year is flagged `estimated`
+in the result rather than passing as though it were known.
+
 ## Exports
 
 Three artefacts you take away rather than look at:
@@ -377,7 +428,7 @@ records the runner-up for each rung so the gap is visible.
 
 | Route | Purpose |
 |---|---|
-| `POST /gilt-ladder/api/ladder` | Build a ladder. Body: `liabilities[]`, `portfolioValue`, `marginalRate`, `lotSize`, `bufferBusinessDays`, `observedPrices[]`, `existingHoldings[]`, `accruedIncomeScheme` |
+| `POST /gilt-ladder/api/ladder` | Build a ladder. Body: `liabilities[]`, `portfolioValue`, `marginalRate`, `lotSize`, `bufferBusinessDays`, `observedPrices[]`, `existingHoldings[]`, `otherIncome`, `accruedIncomeScheme` |
 | `GET /gilt-ladder/api/universe` | The gilt universe and whether it is real or sample |
 | `GET /gilt-ladder/api/curve` | The cached curve, its date, and whether it is stale |
 | `GET /gilt-ladder/api/health` | Liveness; 503 if the universe failed validation |
@@ -438,6 +489,8 @@ lib/planToken.js           Encrypted shareable plan links
 lib/planStore.js           Optional Postgres storage for saved plans
 lib/recost.js              Daily re-costing policy and alert wording
 lib/exports.js             CSV dealing list / cash flows, and the .ics feed
+lib/tax.js                 Savings allowances, tax years, the banded rate
+config/taxYears.js         Allowances by tax year - CHECK AGAINST GOV.UK
 lib/zip.js                 Minimal zip reader (so no unzip binary is needed)
 lib/xlsx.js                Minimal xlsx reader for the DMO export
 scripts/build-universe.js  DMO export -> config/gilts.js

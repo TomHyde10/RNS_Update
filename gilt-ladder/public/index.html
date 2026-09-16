@@ -41,6 +41,11 @@
               <option value="0.45">45% &mdash; additional rate</option>
             </select>
           </label>
+          <label>
+            Other taxable income
+            <span class="hint">salary or pension, before tax; optional</span>
+            <input id="other-income" type="number" min="0" step="1000" placeholder="e.g. 10000" />
+          </label>
           <label class="check">
             <span class="check-row">
               <input id="ais" type="checkbox" checked />
@@ -216,6 +221,32 @@
         <div class="panel">
           <h2>Cash flows against liabilities</h2>
           <div id="chart" class="scroll-x"></div>
+        </div>
+
+        <div class="panel" id="tax-panel" hidden>
+          <h2>Tax on the coupons</h2>
+          <p class="hint block">
+            Gilt coupons are savings income; redemption is CGT-exempt and never taxed. The
+            starting rate for savings and the Personal Savings Allowance make the rate a step
+            function of how much coupon income each tax year carries, so the effective rate below
+            is what gilt selection was actually priced against &mdash; not your marginal rate.
+          </p>
+          <div class="scroll-x">
+            <table id="tax-years" class="data-table">
+              <thead>
+                <tr>
+                  <th>Tax year</th>
+                  <th class="num">Coupon income (&pound;)</th>
+                  <th class="num">Covered by allowances (&pound;)</th>
+                  <th class="num">Taxable (&pound;)</th>
+                  <th class="num">Tax (&pound;)</th>
+                  <th class="num">Effective rate</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <p id="tax-note" class="provenance"></p>
         </div>
 
         <div class="panel">
