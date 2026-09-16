@@ -68,21 +68,25 @@ the tax logic the app's headline claim rests on (2), before adding scope.
       idle proceeds at the curve's own implied forward rate, labelled as an
       assumption. The zero-reinvestment default stays the default.
 
-- [ ] **13. Widened-search rungs fund the wrong liability.** Found while
-      building item 11, and *not* caused by it. When no gilt redeems inside a
-      liability's window the search widens and takes an earlier-maturing gilt.
-      That rung is sized for liability *i*, but `creditAgainstLiabilities`
-      assigns its redemption to the earliest liability the money can reach —
-      which is some *j < i* — so the rung funds a liability it was not bought
-      for and *i* is left short. The backward induction never revisits *i*.
-      Nothing is hidden: the liability reports a shortfall and the rung raises
-      an idle-cash warning, and `test/ladder.test.js` pins that. But the ladder
-      is still wrong, and it is wrong exactly when the universe does not line up
-      with the liability dates, which is the case a user most needs help with.
-      The fix is to pin a rung's redemption to the liability it was bought for
-      and let only its coupons fall to earlier ones — a change to the core
-      algorithm, which is why it is its own item rather than folded into
-      another.
+- [x] **13. Widened-search rungs fund the wrong liability.** Found while
+      building item 11, and not caused by it. When no gilt redeemed inside a
+      liability's window the search widened to an earlier-maturing gilt, whose
+      redemption was then credited to the earliest liability the money could
+      reach rather than the one the rung was sized for — leaving that liability
+      short, with the backward pass already past it. Fixed by pinning a rung's
+      redemption to its own liability while coupons still fall to earlier ones.
+      A well-matched ladder is unchanged to the penny, since there the earliest
+      reachable liability already *was* its own.
+
+      Fixing it exposed a second defect it had been masking. Pinned principals
+      wait long spans, and the reinvestment assumption from item 12 taxed growth
+      as `1 + (g−1)(1−r)`, which does not telescope — the construction valuing a
+      parcel over one span and the coverage walk growing the pool deadline by
+      deadline disagreed by several percent, so a ladder could be built and then
+      reported short. Now `g^(1−r)`, which telescopes exactly and is the better
+      model anyway, with a single flat reinvestment tax rate so both halves use
+      the same number. Verified across 192 combinations of curve shape,
+      liability set, tax rate and reinvestment mode: no disagreements.
 
 ## Deliberately not on the list
 

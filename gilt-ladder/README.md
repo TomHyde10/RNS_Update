@@ -268,8 +268,22 @@ redemption; `diagnostics.selection` reports both. Without that the ladder would
 go on choosing as though the money sat idle and then report interest it had not
 selected for.
 
-The interest is savings income, so it is taxed at the same banded rate the
-destination tax year bears — only the interest, not the money that arrived.
+The interest is savings income, so it is taxed — but at the **flat marginal
+rate**, not at the blended per-year rate the coupons bear. Two reasons pointing
+the same way: it is an assumed cash flow, and letting it into the
+savings-allowance pool would mean an assumption about deposit interest reducing
+the tax on real coupons; and it has to be a single rate, for the reason below.
+
+The after-tax factor is `g^(1−r)`, not `1 + (g−1)(1−r)`. Since `g = e^(fT)`,
+that is `e^(f(1−r)T)` — the forward rate net of tax, compounded continuously,
+which is what "interest taxed as it accrues, the rest reinvested" actually
+means. It is also the only form that **telescopes**: the ladder's construction
+values a parcel of cash over one span while the coverage walk grows the pooled
+cash deadline by deadline, and `g1^(1−r) · g2^(1−r) = (g1·g2)^(1−r)` exactly,
+where taxing each span's growth separately is out by several percent over a long
+wait. Without that the two halves disagree about whether the same ladder funds
+the same liability.
+
 Growth is floored at 1: an inverted curve can imply a negative forward, and a
 modelled negative deposit rate would be a worse assumption than the zero it
 replaced.
@@ -486,6 +500,24 @@ That criterion is provably coupon-neutral before tax — on a fitted curve every
 gilt maturing on a given date costs the same per £1 delivered, which is exactly
 right and is asserted in the tests. So any preference it shows between coupons
 is caused by tax and nothing else.
+
+### Which liability a flow funds
+
+Every flow is credited to the **earliest** liability the money can still reach —
+except a rung's **redemption**, which is pinned to the liability that rung was
+bought for.
+
+That distinction only bites when the search has had to widen. Normally the
+chosen gilt redeems after the previous liability, so the earliest liability its
+principal can reach *is* its own and the pinning changes nothing — a
+well-matched ladder is unaffected to the penny. But when nothing redeems inside
+a liability's window, the search takes an earlier-maturing gilt, and without
+pinning that principal would be credited to some earlier liability instead. The
+rung would be sized for one liability and its money would fund another, leaving
+the first short with the backward pass already past it and never coming back.
+
+Coupons are deliberately *not* pinned: a later rung's income shrinking the rungs
+in front of it is the whole mechanism of backward induction.
 
 **This is not the linear program the design originally called for.** An LP
 minimises cost across the whole universe, but its optimum is typically 30+

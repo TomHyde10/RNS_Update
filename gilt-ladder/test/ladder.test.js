@@ -874,27 +874,115 @@ test('a taxed escalating series is fully funded too', () => {
   for (const row of result.coverage) assert.ok(row.amount > row.statedAmount);
 });
 
-// A liability with no gilt redeeming in its window makes the search widen, and
-// the chosen gilt's redemption then lands early enough to be credited to an
-// EARLIER liability than the one it was bought for - so the rung is sized for
-// one liability and its money funds another. The result says so rather than
-// hiding it: the liability reports a shortfall and the rung raises an
-// idle-cash warning. Pinned here so the behaviour cannot change silently
-// while ROADMAP.md item 13 is outstanding.
-test('a liability with no matching gilt reports a shortfall rather than a false ladder', () => {
+// --- Rungs fund the liability they were bought for -------------------------
+//
+// A liability with no gilt redeeming inside its window makes the search widen
+// to an earlier-maturing gilt. That rung's PRINCIPAL used to be credited, like
+// every other flow, to the earliest liability the money could reach - so the
+// rung was sized for one liability and its money funded another, leaving the
+// first short with the backward pass already past it. The redemption is now
+// pinned to the liability the rung was bought for.
+
+const gappy = [
+  { date: '2028-09-30', amount: 12000 },
+  { date: '2029-09-30', amount: 12000 }, // nothing redeems in this window
+  { date: '2031-09-30', amount: 12000 }, // nor this one
+];
+
+test('a liability with no matching gilt is still funded, by a widened rung', () => {
+  const result = buildLadder({ ...base, liabilities: gappy });
+
+  assert.ok(result.fullyFunded, `unfunded: ${JSON.stringify(result.unfunded)}`);
+  for (const row of result.coverage) assert.ok(row.covered, `${row.date} not covered`);
+  assert.equal(result.holdings.length, 3, 'one rung per liability');
+  assert.ok(result.holdings.some((h) => h.widenedSearch), 'and the search did have to widen');
+});
+
+test('a widened rung funds its own liability, not an earlier one', () => {
+  const result = buildLadder({ ...base, liabilities: gappy });
+
+  const widened = result.holdings.filter((h) => h.widenedSearch);
+  assert.ok(widened.length > 0);
+  for (const holding of widened) {
+    // The gilt redeems before the liability it funds - that is what made the
+    // search widen - and the liability it funds is still its own.
+    assert.ok(holding.redemption < holding.fundsLiability);
+    assert.ok(gappy.some((l) => l.date === holding.fundsLiability));
+  }
+  // Each liability is funded by exactly one rung.
+  assert.deepEqual(
+    [...new Set(result.holdings.map((h) => h.fundsLiability))].sort(),
+    gappy.map((l) => l.date)
+  );
+});
+
+// Pinning must be a no-op when the chosen gilt already redeems after the
+// previous liability, which is every ordinary rung. If this drifts, the fix
+// has started changing ladders it has no business changing.
+test('pinning leaves a well-matched ladder exactly as it was', () => {
   const result = buildLadder({
     ...base,
     liabilities: [
-      { date: '2028-09-30', amount: 12000 },
-      { date: '2029-09-30', amount: 12000 },
-      { date: '2031-09-30', amount: 12000 },
+      { date: '2028-06-30', amount: 10000 },
+      { date: '2030-06-30', amount: 10000 },
     ],
   });
 
-  assert.equal(result.fullyFunded, false, 'it must not claim to have funded these');
-  assert.ok(result.unfunded.length > 0, 'and must say which');
-  assert.ok(result.holdings.some((h) => h.widenedSearch), 'the widened search is what caused it');
-  assert.ok(result.warnings.some((w) => w.type === 'idle-cash'));
+  assert.ok(result.fullyFunded);
+  assert.ok(!result.holdings.some((h) => h.widenedSearch), 'nothing needed widening here');
+  // The exact cost of this ladder on this curve, unchanged by the pinning.
+  assert.ok(Math.abs(result.totals.cost - 18132.31) < 0.01, `got ${result.totals.cost}`);
+});
+
+// Pinning applies to the principal only. A later rung's coupons must still
+// fall to earlier liabilities, or the mechanism that shrinks the rungs in
+// front of a high-coupon holding would be gone.
+test('coupons still fall to earlier liabilities after pinning', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [
+      { date: '2031-06-30', amount: 100 },
+      { date: '2035-06-30', amount: 200000 },
+    ],
+  });
+  assert.ok(result.fullyFunded);
+  assert.equal(result.holdings.length, 1, 'the long rung\'s coupons still cover the tiny early one');
+});
+
+// Gilts already owned were not bought for any liability, so there is nothing
+// to pin them to: their redemption goes to the earliest liability it can
+// reach, exactly as before.
+test('an existing holding\'s redemption is not pinned', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [
+      { date: '2030-09-30', amount: 12000 },
+      { date: '2035-09-30', amount: 12000 },
+    ],
+    // Redeems in 2028, well before either liability.
+    existingHoldings: [{ isin: 'TEST00000001', nominal: 12000 }],
+  });
+
+  assert.ok(result.fullyFunded);
+  // It reduced what had to be bought for the FIRST liability, which is where
+  // its money can first be used.
+  const bare = buildLadder({
+    ...base,
+    liabilities: [
+      { date: '2030-09-30', amount: 12000 },
+      { date: '2035-09-30', amount: 12000 },
+    ],
+  });
+  assert.ok(result.totals.cost < bare.totals.cost);
+});
+
+test('the pinned ladder costs more than the under-funded one it replaces', () => {
+  // Not a regression: the old ladder was cheaper because it bought two rungs
+  // for three liabilities and left two of them short.
+  const result = buildLadder({ ...base, liabilities: gappy });
+  const owed = gappy.reduce((sum, l) => sum + l.amount, 0);
+  assert.ok(result.totals.cost > 30000, `got ${result.totals.cost}`);
+  assert.ok(result.totals.cost < owed, 'but still less than the undiscounted liabilities');
 });
 
 // --- Reinvestment of idle cash ---------------------------------------------

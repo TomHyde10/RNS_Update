@@ -308,9 +308,44 @@ function buildLadder(request) {
   const reinvesting = options.reinvestment === 'forward';
   const rateAt = rateResolver(rateFor);
 
-  const creditAgainstLiabilities = (flows) => {
+  // Reinvestment interest is taxed at the flat marginal rate, NOT at the
+  // blended per-year rate the coupons bear. Two reasons, and they point the
+  // same way.
+  //
+  // It is an assumed cash flow. Letting it into the savings-allowance pool
+  // would mean an assumption about deposit interest reducing the tax on real
+  // coupons, which is the wrong direction for something the user cannot bank.
+  //
+  // And it has to be ONE rate. Construction values a parcel of cash over a
+  // single span while the coverage walk grows the pool deadline by deadline;
+  // with a rate that varies by tax year the two would use different rates for
+  // the same money and disagree about whether the ladder funds the liability.
+  const reinvestmentRate = marginalRate;
+
+  // `redemptionTarget` pins a bought rung's REDEMPTION to the liability it was
+  // bought for. Without it the redemption goes, like every other flow, to the
+  // earliest liability the money can reach - which is right for a coupon and
+  // wrong for the principal.
+  //
+  // It only ever bites when the search had to widen. Normally the chosen gilt
+  // redeems after the previous liability, so the earliest liability its
+  // principal can reach IS this one and pinning changes nothing. But when
+  // nothing redeems inside a liability's window the search takes an
+  // earlier-maturing gilt, and that principal would then be credited to some
+  // earlier liability instead - leaving the liability the rung was actually
+  // sized for unfunded, with the backward pass already past it and never
+  // coming back. The ladder reported the shortfall rather than hiding it, but
+  // it had still bought a rung whose money went somewhere else.
+  //
+  // Coupons keep falling to the earliest liability they can reach, which is
+  // the behaviour that lets a later rung's income shrink the rungs in front
+  // of it.
+  const creditAgainstLiabilities = (flows, redemptionTarget = null) => {
     for (const flow of flows) {
-      const target = liabilities.findIndex((l, j) => flow.date <= fundBy[j]);
+      const target =
+        flow.isRedemption && redemptionTarget != null
+          ? redemptionTarget
+          : liabilities.findIndex((l, j) => flow.date <= fundBy[j]);
       if (target === -1) continue; // arrives too late to fund anything - surplus
       // Money that arrives early is worth more by the time it is needed, but
       // only if it is assumed to be reinvested. With the default it is worth
@@ -320,7 +355,7 @@ function buildLadder(request) {
         settlement,
         from: flow.date,
         to: fundBy[target],
-        rate: rateAt(fundBy[target]),
+        rate: reinvestmentRate,
         enabled: reinvesting,
       });
     }
@@ -420,7 +455,7 @@ function buildLadder(request) {
         settlement,
         from: candidate.gilt.redemption,
         to: latest,
-        rate: rateAt(latest),
+        rate: reinvestmentRate,
         enabled: reinvesting,
       });
 
@@ -481,10 +516,10 @@ function buildLadder(request) {
       candidates: candidates.length,
     });
 
-    // Credit every flow this holding produces against the earliest liability
-    // the money can still reach. Processing backwards means the redemption
-    // lands on this rung and the coupons fall to earlier ones.
-    creditAgainstLiabilities(flows);
+    // Credit every flow this holding produces. The redemption is pinned to the
+    // liability this rung was bought for; the coupons fall to the earliest
+    // liability they can reach.
+    creditAgainstLiabilities(flows, i);
   }
 
   // The scheme only catches an individual holding over £5,000 nominal of
@@ -616,7 +651,11 @@ function summarise({
       settlement,
       from,
       to,
-      rate: rateAt(to),
+      // The same flat rate the construction used - see reinvestmentRate in
+      // buildLadder. This walk grows the pool deadline by deadline while the
+      // construction values a parcel over one span, and only a single rate
+      // with a telescoping growth form makes those two agree.
+      rate: marginalRate,
       enabled: reinvesting,
     });
     reinvestmentIncome += grown - amount;

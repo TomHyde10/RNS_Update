@@ -29,12 +29,25 @@ function growthFactor(curve, settlement, from, to) {
   return Math.max(1, dfFrom / dfTo);
 }
 
-// Interest is savings income like any coupon, so it is taxed at the same rate
-// the destination tax year bears. Only the interest is taxed; the money that
-// arrived was already taxed on its way in.
+// Interest is savings income, so it is taxed - but WHERE the tax is applied in
+// a compounding chain matters, and the obvious form is wrong.
+//
+// `1 + (g - 1)(1 - r)` taxes the whole span's growth once, as though twenty
+// years of interest were a single payment at the end. Besides being wrong
+// about how interest is taxed, it does not TELESCOPE: taxing one long span is
+// not the same as taxing each shorter span and compounding, and the two differ
+// by several percent over a long wait. That matters here because the ladder's
+// construction values a parcel of cash over one span while the coverage walk
+// grows the pooled cash deadline by deadline - so the two would disagree about
+// whether the same ladder funds the same liability.
+//
+// `g^(1 - r)` is both correct and consistent: g = e^(fT), so g^(1-r) =
+// e^(f(1-r)T), which is the forward rate net of tax, compounded continuously -
+// interest taxed as it accrues with the remainder reinvested. And it
+// telescopes exactly, because g1^(1-r) * g2^(1-r) = (g1*g2)^(1-r).
 function reinvested(amount, factor, rate = 0) {
-  if (factor <= 1) return amount;
-  return amount + amount * (factor - 1) * (1 - rate);
+  if (factor <= 1 || rate >= 1) return amount;
+  return amount * factor ** (1 - rate);
 }
 
 // The whole operation in one call: what `amount`, arriving on `from`, is worth

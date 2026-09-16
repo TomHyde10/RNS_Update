@@ -36,11 +36,45 @@ test('growth is never less than 1, even on an inverted curve', () => {
   assert.ok(growthFactor(inverted, '2026-09-15', '2030-01-01', '2036-01-01') >= 1);
 });
 
-test('only the interest is taxed, not the money that arrived', () => {
-  const gross = reinvested(10000, 1.2, 0);
+test('untaxed, the money simply grows by the factor', () => {
+  assert.ok(Math.abs(reinvested(10000, 1.2, 0) - 12000) < 1e-9);
+});
+
+test('tax reduces the growth, never the money that arrived', () => {
   const taxed = reinvested(10000, 1.2, 0.4);
-  assert.equal(gross, 12000);
-  assert.equal(taxed, 10000 + 2000 * 0.6);
+  assert.ok(taxed > 10000, 'the principal is untouched - it was taxed on the way in');
+  assert.ok(taxed < 12000, 'but the interest is not');
+});
+
+// The property the whole form was chosen for. The ladder's construction values
+// a parcel of cash over ONE span while the coverage walk grows the pooled cash
+// deadline by deadline; unless taxed growth telescopes, the two compute
+// different amounts for the same money and disagree about whether a liability
+// is funded. `1 + (g - 1)(1 - r)` does not telescope - it is out by several
+// percent over a long wait - and `g^(1 - r)` does, exactly.
+test('taxed growth telescopes across a split span', () => {
+  const rate = 0.45;
+  const whole = reinvested(1000, 1.5 * 1.4, rate);
+  const split = reinvested(reinvested(1000, 1.5, rate), 1.4, rate);
+  assert.ok(Math.abs(whole - split) < 1e-9, `${whole} vs ${split}`);
+
+  // And the form it replaced genuinely did not, so this is not vacuous.
+  const naive = (amount, g) => amount + amount * (g - 1) * (1 - rate);
+  assert.ok(Math.abs(naive(1000, 1.5 * 1.4) - naive(naive(1000, 1.5), 1.4)) > 10);
+});
+
+// g = e^(fT), so g^(1-r) = e^(f(1-r)T): the forward rate net of tax,
+// compounded continuously - interest taxed as it accrues, the rest reinvested.
+test('the taxed factor is the forward rate net of tax', () => {
+  const forward = 0.05;
+  const years = 12;
+  const rate = 0.4;
+  const grown = reinvested(1, Math.exp(forward * years), rate);
+  assert.ok(Math.abs(grown - Math.exp(forward * (1 - rate) * years)) < 1e-12);
+});
+
+test('a 100% rate leaves nothing to compound', () => {
+  assert.equal(reinvested(1000, 2, 1), 1000);
 });
 
 test('with reinvestment off, value is the identity', () => {
