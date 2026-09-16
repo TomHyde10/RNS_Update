@@ -79,19 +79,32 @@ function parseCurves(sheetXml) {
   return curves;
 }
 
-function parseLatestCurve(zipBuffer) {
+// Every dated curve in the workbook, oldest first. The BoE file holds one per
+// business day of the current month, and until now all but the last were
+// parsed and thrown away - which is a month of free history for asking how the
+// cost of a plan has moved.
+function parseAllCurves(zipBuffer) {
   const workbook = extract(zipBuffer, (name) => name === WORKBOOK);
   const sheet = extract(workbook, SPOT_SHEET).toString('utf8');
-  const curves = parseCurves(sheet);
+  return parseCurves(sheet);
+}
+
+function parseLatestCurve(zipBuffer) {
+  const curves = parseAllCurves(zipBuffer);
   return curves[curves.length - 1];
 }
 
-async function fetchCurve({ url = BOE_ZIP_URL, fetchImpl = fetch } = {}) {
+async function fetchAllCurves({ url = BOE_ZIP_URL, fetchImpl = fetch } = {}) {
   const res = await fetchImpl(url, {
     headers: { 'User-Agent': 'GiltLadder/1.0 (+https://github.com/TomHyde10)' },
   });
   if (!res.ok) throw new Error(`BoE curve download failed: HTTP ${res.status}`);
-  return parseLatestCurve(Buffer.from(await res.arrayBuffer()));
+  return parseAllCurves(Buffer.from(await res.arrayBuffer()));
+}
+
+async function fetchCurve(options) {
+  const curves = await fetchAllCurves(options);
+  return curves[curves.length - 1];
 }
 
 // Linear interpolation on spot rates between published points. Outside the
@@ -127,7 +140,9 @@ module.exports = {
   WORKBOOK,
   SPOT_SHEET,
   fetchCurve,
+  fetchAllCurves,
   parseLatestCurve,
+  parseAllCurves,
   parseCurves,
   spotRate,
   discountFactor,

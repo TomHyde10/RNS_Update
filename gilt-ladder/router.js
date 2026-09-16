@@ -13,6 +13,7 @@ const { sealPlan, openPlan, normalizePlan } = require('./lib/planToken');
 const planStore = require('./lib/planStore');
 const { runRecosting, DEFAULT_THRESHOLD_PERCENT, DEFAULT_HOUR_UTC } = require('./lib/recost');
 const { dealingListCsv, cashflowsCsv, calendarIcs } = require('./lib/exports');
+const { runScenarios } = require('./lib/scenarios');
 
 const MOUNT = '/gilt-ladder';
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -265,6 +266,68 @@ async function handleLadder(req, res) {
   }
 }
 
+// What a move in rates would do to the cost of funding a plan, and what it has
+// already done this month.
+//
+// Every scenario is the same buildLadder against a transformed curve rather
+// than a duration approximation, which is the point: an approximation cannot
+// show the ladder re-selecting different gilts, and rounding up to whole lots
+// is not linear in anything.
+async function handleScenarios(req, res) {
+  const parsed = await readPlanBody(req, res);
+  if (!parsed) return;
+
+  let curveEntry;
+  try {
+    curveEntry = await getCurve();
+  } catch (err) {
+    sendJson(res, 503, { error: 'no yield curve available', details: err.message });
+    return;
+  }
+
+  const build = (curve) => {
+    const settlement = toISO(addBusinessDays(curve.date, DEFAULTS.settlementBusinessDays));
+    return buildLadder({
+      ...parsed.plan,
+      settlement,
+      curve,
+      universe: activeAt(universe, settlement),
+    });
+  };
+
+  let scenarios;
+  try {
+    scenarios = runScenarios(curveEntry.curve, build);
+  } catch (err) {
+    sendJson(res, 400, { error: 'could not build ladder', details: err.message });
+    return;
+  }
+
+  // The BoE workbook carries one curve per business day of the current month
+  // and the application used to keep only the last. Costing the plan against
+  // each of them answers "how has this moved this month" with no extra data.
+  const history = [];
+  for (const curve of curveEntry.history || []) {
+    try {
+      const result = build(curve);
+      history.push({ date: curve.date, cost: result.totals.cost, fullyFunded: result.fullyFunded });
+    } catch {
+      // A curve the plan cannot be built against is left out of the series
+      // rather than breaking it - an early-month curve may predate a gilt.
+    }
+  }
+
+  sendJson(res, 200, {
+    ...scenarios,
+    curveDate: curveEntry.curve.date,
+    monthToDate: history,
+    provenance: {
+      priceBasis: 'derived from the Bank of England nominal gilt spot curve, shifted',
+      indicative: true,
+    },
+  });
+}
+
 const sendFile = (res, status, contentType, filename, body) => {
   res.writeHead(status, {
     'Content-Type': contentType,
@@ -473,6 +536,11 @@ async function handle(req, res, url) {
 
     if (req.method === 'POST' && subPath === '/api/ladder') {
       await handleLadder(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && subPath === '/api/scenarios') {
+      await handleScenarios(req, res);
       return;
     }
 

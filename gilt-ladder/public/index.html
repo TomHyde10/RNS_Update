@@ -291,6 +291,35 @@
         </div>
 
         <div class="panel">
+          <h2>If rates move</h2>
+          <p class="hint block">
+            Each row is the whole ladder rebuilt against a shifted curve, not an estimate from
+            duration &mdash; so it shows the ladder re-selecting different gilts, which an
+            estimate cannot. A cash-flow matched ladder should be fairly insensitive; that is a
+            claim worth checking.
+          </p>
+          <div class="actions">
+            <button id="run-scenarios" type="button" class="secondary">Run scenarios</button>
+          </div>
+          <div class="scroll-x">
+            <table id="scenarios" class="data-table" hidden>
+              <thead>
+                <tr>
+                  <th>Scenario</th>
+                  <th class="num">Cost to fund (&pound;)</th>
+                  <th class="num">Change (&pound;)</th>
+                  <th class="num">Change</th>
+                  <th>Still funded</th>
+                  <th>Rungs</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="month-to-date"></div>
+        </div>
+
+        <div class="panel">
           <h2>Take it away</h2>
           <div class="actions">
             <button id="export-dealing" type="button" class="secondary">Dealing list (CSV)</button>

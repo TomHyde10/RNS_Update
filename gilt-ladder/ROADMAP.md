@@ -57,7 +57,7 @@ the tax logic the app's headline claim rests on (2), before adding scope.
       starting rate band make the effective rate a step function, and
       selection is driven by that rate. Requires aggregating flows into tax
       years (6 April - 5 April), which nothing does today.
-- [ ] **9. Sensitivity and scenarios.** Parallel shifts and steepen/flatten,
+- [x] **9. Sensitivity and scenarios.** Parallel shifts and steepen/flatten,
       plus month-to-date cost drift: `parseCurves` already returns every
       business day in the workbook and `parseLatestCurve` discards all but
       the last.

@@ -7,7 +7,13 @@
 // curve and say how old it is.
 const fs = require('fs');
 const path = require('path');
-const { fetchCurve } = require('./curve');
+const { fetchAllCurves } = require('./curve');
+
+// How many of the workbook's dated curves to keep. It holds one per business
+// day of the current month, which is the whole of the history available for
+// free; keeping them costs a few tens of kilobytes and answers "how has this
+// plan moved this month" without another request.
+const MAX_HISTORY = 40;
 
 const DATA_DIR = process.env.GILT_LADDER_DATA_DIR || path.join(__dirname, '..', 'data');
 const SNAPSHOT = path.join(DATA_DIR, 'curve.json');
@@ -22,7 +28,11 @@ let inFlight = null;
 function readSnapshot() {
   try {
     const raw = JSON.parse(fs.readFileSync(SNAPSHOT, 'utf8'));
-    if (raw && raw.curve && Array.isArray(raw.curve.points)) return raw;
+    // `history` was added later, so a snapshot written by an earlier version
+    // has none. Treated as an empty history rather than an unreadable file.
+    if (raw && raw.curve && Array.isArray(raw.curve.points)) {
+      return { ...raw, history: Array.isArray(raw.history) ? raw.history : [] };
+    }
   } catch {
     // No snapshot yet, or an unreadable one - treated the same as a cold start.
   }
@@ -41,8 +51,12 @@ function writeSnapshot(entry) {
 }
 
 async function refresh() {
-  const curve = await fetchCurve();
-  const entry = { curve, fetchedAt: new Date().toISOString() };
+  const curves = await fetchAllCurves();
+  const entry = {
+    curve: curves[curves.length - 1],
+    history: curves.slice(-MAX_HISTORY),
+    fetchedAt: new Date().toISOString(),
+  };
   cached = entry;
   writeSnapshot(entry);
   return entry;
@@ -78,4 +92,4 @@ async function getCurve({ force = false } = {}) {
   }
 }
 
-module.exports = { getCurve, refresh, MAX_AGE_MS, SNAPSHOT };
+module.exports = { getCurve, refresh, MAX_AGE_MS, MAX_HISTORY, SNAPSHOT };

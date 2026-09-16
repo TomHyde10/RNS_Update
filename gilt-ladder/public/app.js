@@ -526,6 +526,64 @@ async function build() {
   }
 }
 
+async function runScenarios() {
+  const plan = readPlan();
+  if (!plan.liabilities.length) {
+    setStatus('Add at least one liability first.', true);
+    return;
+  }
+
+  const button = $('run-scenarios');
+  button.disabled = true;
+  setStatus('Rebuilding the ladder under each scenario…');
+
+  try {
+    const res = await fetch('api/scenarios', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(plan),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      setStatus(body.error, true);
+      return;
+    }
+
+    $('scenarios').hidden = false;
+    $('scenarios').querySelector('tbody').innerHTML = body.rows
+      .map((row) =>
+        row.error
+          ? `<tr><td>${row.name}</td><td colspan="5" class="muted">${row.error}</td></tr>`
+          : `<tr>
+              <td>${row.name}</td>
+              <td class="num">${gbpExact(row.cost)}</td>
+              <td class="num">${row.change >= 0 ? '+' : '−'}${gbpExact(Math.abs(row.change))}</td>
+              <td class="num">${row.changePercent == null ? '—' : `${row.changePercent >= 0 ? '+' : '−'}${Math.abs(row.changePercent).toFixed(2)}%`}</td>
+              <td><span class="pill ${row.fullyFunded ? 'yes' : 'no'}">${row.fullyFunded ? 'Yes' : 'No'}</span></td>
+              <td>${row.holdingCount}${row.reselected ? ' <span class="pill derived" title="A different set of gilts wins under this curve">reselected</span>' : ''}</td>
+            </tr>`
+      )
+      .join('');
+
+    // The Bank's workbook carries a curve for every business day of the month
+    // and the app used to keep only the last of them.
+    const history = body.monthToDate || [];
+    $('month-to-date').innerHTML = history.length
+      ? `<p class="provenance">This month: ${gbp(history[0].cost)} on ${shortDate(history[0].date)} to ${gbp(
+          history[history.length - 1].cost
+        )} on ${shortDate(history[history.length - 1].date)} — a move of ${gbp(
+          history[history.length - 1].cost - history[0].cost
+        )} across ${history.length} published curves.</p>`
+      : '';
+
+    setStatus(`Scenarios run against the ${shortDate(body.curveDate)} curve.`);
+  } catch (err) {
+    setStatus(`Could not run scenarios: ${err.message}`, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 // Exports are POSTed rather than linked, because the plan has to travel with
 // the request and a plan does not belong in a URL that a browser will remember.
 // The response is a file, so it goes through a blob and a synthetic click.
@@ -789,6 +847,7 @@ async function init() {
   $('delete-plan').addEventListener('click', deleteSavedPlan);
   $('saved-plans').addEventListener('change', (event) => loadSavedPlan(event.target.value));
   $('watch').addEventListener('change', (event) => setWatch(event.target.checked));
+  $('run-scenarios').addEventListener('click', runScenarios);
   $('export-dealing').addEventListener('click', () =>
     download('api/export/dealing-list.csv', 'gilt-dealing-list.csv')
   );

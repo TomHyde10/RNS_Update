@@ -70,7 +70,7 @@ rather than silently priced as though conventional.
 
 | What | Where | How |
 |---|---|---|
-| Gilt spot curve | Bank of England, `latest-yield-curve-data.zip` | Fetched automatically, daily, cached |
+| Gilt spot curve | Bank of England, `latest-yield-curve-data.zip` | Fetched automatically, daily, cached with the month's dailies |
 | Gilt universe | DMO "Gilts in Issue" (D1A) | **Manual** download, then `npm run gilt:build-universe -- <file>` |
 
 ### Why the universe is a committed file
@@ -244,6 +244,35 @@ sealed is still acceptable. Plans are therefore re-validated on the way out as
 well as in, against exactly the validation a build request gets, and only
 known fields are carried: without that the request body would be an open
 channel into `buildLadder`'s options.
+
+## If rates move
+
+One curve gives one number, and the curve moves every day. A cash-flow matched
+ladder is supposed to be largely insensitive to that — a claim worth checking
+rather than asserting, and the duration gap only checks it to first order.
+
+Parallel shifts of ±25/50/100bp, plus a steepen and a flatten (a rotation about
+the 10-year point: each end moves by half the stated amount, the pivot not at
+all). Each one is the **whole ladder rebuilt** against the transformed curve,
+never an estimate from duration — because an estimate hides the two things most
+worth seeing: that the ladder can re-select different gilts under a different
+curve (reported as `reselected`), and that rounding up to whole lots is not
+linear in anything. Convexity falls out of it for free: −100bp costs more than
++100bp saves.
+
+Rates are allowed to go negative. Gilt yields have been, and clamping at zero
+would quietly turn a symmetric pair of scenarios into an asymmetric one.
+
+Scenarios are matched on a plain-ASCII `id`; `name` is for display and uses a
+real minus sign rather than a hyphen, so matching on it would make a typographic
+choice into a breaking change.
+
+### This month, for free
+
+The Bank's workbook holds one curve for **every business day of the current
+month**, and `parseLatestCurve` parsed them all and threw all but the last away.
+They are now kept, so the plan can be costed against each one and the month's
+drift reported without another request.
 
 ## Savings allowances and the tax year
 
@@ -436,6 +465,7 @@ records the runner-up for each rung so the gap is visible.
 | `GET /gilt-ladder/api/plan?t=` | Open a shared plan token |
 | `GET/POST /gilt-ladder/api/plans` | List or save plans; 501 without `DATABASE_URL` |
 | `GET/PATCH/DELETE /gilt-ladder/api/plans/:id` | Read, watch/unwatch, or delete one saved plan |
+| `POST /gilt-ladder/api/scenarios` | Cost a plan under shifted curves, plus this month's drift |
 | `POST /gilt-ladder/api/export/dealing-list.csv` | The dealing list for a plan |
 | `POST /gilt-ladder/api/export/cashflows.csv` | The cash flow calendar for a plan |
 | `POST\|GET /gilt-ladder/api/export/calendar.ics` | Coupons and liabilities as a calendar; `GET` takes a share token in `t` |
@@ -490,6 +520,7 @@ lib/planStore.js           Optional Postgres storage for saved plans
 lib/recost.js              Daily re-costing policy and alert wording
 lib/exports.js             CSV dealing list / cash flows, and the .ics feed
 lib/tax.js                 Savings allowances, tax years, the banded rate
+lib/scenarios.js           Curve shifts and twists for sensitivity
 config/taxYears.js         Allowances by tax year - CHECK AGAINST GOV.UK
 lib/zip.js                 Minimal zip reader (so no unzip binary is needed)
 lib/xlsx.js                Minimal xlsx reader for the DMO export
