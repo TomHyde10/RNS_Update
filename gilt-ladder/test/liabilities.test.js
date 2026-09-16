@@ -77,3 +77,52 @@ test('validation rejects an unknown frequency and a bad count', () => {
   assert.match(validateRepeat({ every: 'year', count: 2.5 }, 'l')[0], /whole number/);
   assert.match(validateRepeat({ every: 'year', count: MAX_OCCURRENCES + 1 }, 'l')[0], /between 1 and/);
 });
+
+// --- Escalation ------------------------------------------------------------
+//
+// School fees and care costs rise, and a nominal ladder built against today's
+// figure silently under-funds them. This lets the amount be stated in today's
+// money and uprated to the date it falls due - an assumption the user states
+// and can see, applied to the liability side only. It is not index-linked gilt
+// support and does not pretend to be: the assets stay nominal.
+
+const { escalate, validateEscalation, MAX_ESCALATION } = require('../lib/liabilities');
+
+test('no escalation leaves the amount exactly alone', () => {
+  assert.equal(escalate(12000, 0, '2026-09-16', '2040-09-16'), 12000);
+  assert.equal(escalate(12000, null, '2026-09-16', '2040-09-16'), 12000);
+});
+
+test('escalation compounds annually', () => {
+  const ten = escalate(1000, 0.05, '2026-09-16', '2036-09-16');
+  // Ten years and two leap days, on an ACT/365 year, so a shade over 10.
+  assert.ok(Math.abs(ten - 1000 * 1.05 ** (3653 / 365)) < 1e-9);
+  assert.ok(ten > 1600 && ten < 1660, `got ${ten}`);
+});
+
+test('a part year escalates by a part year', () => {
+  const half = escalate(1000, 0.1, '2026-09-16', '2027-03-17');
+  assert.ok(half > 1000 && half < 1050, `got ${half}`);
+});
+
+test('escalation may be negative, for a cost expected to fall', () => {
+  assert.ok(escalate(1000, -0.02, '2026-09-16', '2036-09-16') < 1000);
+});
+
+// 3 entered where 0.03 was meant would compound a liability into the millions.
+test('an escalation that is obviously a percentage is refused', () => {
+  assert.deepEqual(validateEscalation(0.05, 'l'), []);
+  assert.deepEqual(validateEscalation(null, 'l'), []);
+  assert.match(validateEscalation(3, 'l')[0], /between/);
+  assert.match(validateEscalation(MAX_ESCALATION + 0.01, 'l')[0], /between/);
+  assert.match(validateEscalation('abc', 'l')[0], /between/);
+});
+
+test('a series carries its escalation onto every occurrence', () => {
+  const out = expand([{ date: '2028-09-30', amount: 12000, escalation: 0.05, repeat: { every: 'year', count: 3 } }]);
+  assert.equal(out.length, 3);
+  for (const l of out) {
+    assert.equal(l.escalation, 0.05);
+    assert.equal(l.amount, 12000, 'the base amount, uprated later against a settlement date');
+  }
+});

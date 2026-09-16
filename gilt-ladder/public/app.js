@@ -86,6 +86,18 @@ function addLiabilityRow(date = '', amount = '') {
     else if (countInput.value === '1') countInput.value = '5';
   });
 
+  // Entered as a percentage because that is how anybody says it; sent as a
+  // rate, because that is what the model works in.
+  const escalationCell = document.createElement('td');
+  const escalationInput = document.createElement('input');
+  escalationInput.type = 'number';
+  escalationInput.min = '-50';
+  escalationInput.max = '50';
+  escalationInput.step = '0.5';
+  escalationInput.className = 'liability-escalation';
+  escalationInput.placeholder = '0';
+  escalationCell.appendChild(escalationInput);
+
   const removeCell = document.createElement('td');
   const remove = document.createElement('button');
   remove.type = 'button';
@@ -97,7 +109,7 @@ function addLiabilityRow(date = '', amount = '') {
   });
   removeCell.appendChild(remove);
 
-  tr.append(dateCell, amountCell, repeatCell, countCell, removeCell);
+  tr.append(dateCell, amountCell, repeatCell, countCell, escalationCell, removeCell);
   tbody.appendChild(tr);
 }
 
@@ -199,9 +211,11 @@ function readLiabilities() {
     .map((tr) => {
       const every = tr.querySelector('.liability-repeat').value;
       const count = Number(tr.querySelector('.liability-count').value);
+      const risesPercent = Number(tr.querySelector('.liability-escalation').value);
       return {
         date: tr.querySelector('.liability-date').value,
         amount: Number(tr.querySelector('.liability-amount').value),
+        ...(risesPercent ? { escalation: risesPercent / 100 } : {}),
         // Omitted entirely rather than sent as a repeat of one, so a plain
         // liability goes over the wire as a plain liability.
         ...(every && count > 1 ? { repeat: { every, count } } : {}),
@@ -225,7 +239,14 @@ function stat(label, value, tone, title) {
 function renderSummary(result) {
   const { totals, fullyFunded } = result;
   const cards = [
-    stat('Total liabilities', gbp(totals.liabilities)),
+    stat(
+      'Total liabilities',
+      gbp(totals.liabilities),
+      '',
+      totals.liabilitiesAsStated !== totals.liabilities
+        ? `${gbp(totals.liabilitiesAsStated)} in today's money, uprated to the dates they fall due.`
+        : ''
+    ),
     stat('Cost to fund', gbp(totals.cost), '', 'What still has to be bought, at these prices.'),
     ...(totals.existingCount
       ? [stat('Already owned', gbp(totals.existingValue), '', `${totals.existingCount} holding(s), valued not costed.`)]
@@ -369,6 +390,11 @@ function renderCoverage(coverage) {
       (c) => `<tr>
         <td>${shortDate(c.date)}</td>
         <td class="num">${gbpExact(c.amount)}</td>
+        <td class="num">${
+          c.statedAmount == null
+            ? '—'
+            : `${gbpExact(c.statedAmount)} <span class="pill derived" title="Uprated at ${(c.escalation * 100).toFixed(2)}% a year">+${(c.escalation * 100).toFixed(1)}%/yr</span>`
+        }</td>
         <td><span class="pill ${c.covered ? 'yes' : 'no'}">${c.covered ? 'Covered' : 'Short'}</span></td>
         <td class="num">${gbpExact(c.surplusCarried)}</td>
       </tr>`
@@ -661,6 +687,11 @@ function writePlan(plan) {
     select.value = l.repeat.every;
     count.disabled = false;
     count.value = l.repeat.count;
+  }
+  for (const [i, l] of (plan.liabilities || []).entries()) {
+    if (!l.escalation) continue;
+    const row = $('liabilities').querySelector('tbody').children[i];
+    if (row) row.querySelector('.liability-escalation').value = (l.escalation * 100).toFixed(2).replace(/\.?0+$/, '');
   }
   if (!(plan.liabilities || []).length) addLiabilityRow();
 

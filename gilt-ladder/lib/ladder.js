@@ -26,7 +26,7 @@ const {
   streamDuration,
 } = require('./bondMath');
 const { discountTo } = require('./curve');
-const { expand: expandLiabilities } = require('./liabilities');
+const { expand: expandLiabilities, escalate } = require('./liabilities');
 const { taxYearOf, taxByYear, ratesByYear, checkedAgainst: taxCheckedAgainst } = require('./tax');
 
 const DEFAULTS = {
@@ -251,10 +251,24 @@ function buildLadder(request) {
     options.settlement || addBusinessDays(curve.date, options.settlementBusinessDays)
   );
 
-  // Series are expanded first, so nothing downstream - matching, coverage,
-  // the chart - ever sees a repeating liability.
+  // Series are expanded and amounts stated in today's money are uprated first,
+  // so nothing downstream - matching, coverage, the chart - ever sees anything
+  // but a plain dated amount in the money of the day it falls due.
   const liabilities = expandLiabilities(request.liabilities)
-    .map((l) => ({ date: toISO(l.date), amount: Number(l.amount) }))
+    .map((l) => {
+      const date = toISO(l.date);
+      const stated = Number(l.amount);
+      const escalation = l.escalation ? Number(l.escalation) : 0;
+      return {
+        date,
+        amount: escalate(stated, escalation, settlement, date),
+        // Kept so the result can show what was typed next to what it became.
+        // A liability that has quietly grown 60% between being entered and
+        // being funded should not have to be reverse-engineered.
+        statedAmount: stated,
+        escalation,
+      };
+    })
     .sort((a, b) => a.date.localeCompare(b.date));
 
   if (!liabilities.length) throw new Error('at least one liability is required');
@@ -486,6 +500,11 @@ function buildLadder(request) {
     options,
     accruedIncomeScheme,
     existing,
+    // The coverage walk has to credit cash at exactly the rate the
+    // construction spent against, or it reports a shortfall the ladder does
+    // not have. Passed explicitly rather than re-derived, so the two cannot
+    // drift apart again.
+    rateFor,
     taxRows,
     taxPasses: taxPass + 1,
     otherIncome,
@@ -503,6 +522,7 @@ function summarise({
   settlement,
   options,
   accruedIncomeScheme,
+  rateFor,
   taxRows,
   taxPasses,
   otherIncome,
@@ -520,7 +540,7 @@ function summarise({
   const calendar = new Map();
   for (const holding of [...existing, ...holdings]) {
     const gilt = { name: holding.name, coupon: holding.coupon, redemption: holding.redemption };
-    for (const flow of holdingFlows(gilt, holding.nominal, settlement, marginalRate, holding.aisRelief)) {
+    for (const flow of holdingFlows(gilt, holding.nominal, settlement, rateFor, holding.aisRelief)) {
       const entry = calendar.get(flow.date) || { date: flow.date, amount: 0, gross: 0 };
       entry.amount += flow.amount;
       entry.gross += flow.gross;
@@ -533,7 +553,7 @@ function summarise({
   // from money that had actually arrived by then.
   let cash = 0;
   let flowIndex = 0;
-  const coverage = liabilities.map((liability, i) => {
+  const coverage = liabilities.map((liability) => {
     const deadline = toISO(addBusinessDays(liability.date, -options.bufferBusinessDays));
     while (flowIndex < flows.length && flows[flowIndex].date <= deadline) {
       cash += flows[flowIndex].amount;
@@ -544,6 +564,11 @@ function summarise({
     return {
       date: liability.date,
       amount: liability.amount,
+      // Only when escalation was actually applied, so a plain liability's
+      // coverage row stays exactly as it was.
+      ...(liability.escalation
+        ? { statedAmount: liability.statedAmount, escalation: liability.escalation }
+        : {}),
       covered,
       shortfall: covered ? 0 : liability.amount - (cash + liability.amount),
       surplusCarried: Math.max(0, cash),
@@ -640,6 +665,9 @@ function summarise({
     cashflows: flows,
     totals: {
       liabilities: liabilities.reduce((sum, l) => sum + l.amount, 0),
+      // What was entered, before any uprating. Equal to `liabilities` when
+      // nothing escalates.
+      liabilitiesAsStated: liabilities.reduce((sum, l) => sum + l.statedAmount, 0),
       cost: totalCost,
       portfolioValue,
       // Positive: the portfolio covers the liabilities with this much to spare.

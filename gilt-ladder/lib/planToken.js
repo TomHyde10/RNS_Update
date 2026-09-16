@@ -57,6 +57,7 @@ function normalizePlan(input) {
       ...(l && l.repeat
         ? { repeat: { every: String(l.repeat.every || ''), count: num(l.repeat.count) } }
         : {}),
+      ...(l && l.escalation ? { escalation: num(l.escalation) } : {}),
     })),
     observedPrices: (Array.isArray(plan.observedPrices) ? plan.observedPrices : []).map((p) => ({
       isin: String((p && p.isin) || '').trim().toUpperCase(),

@@ -764,3 +764,135 @@ test('existing holdings count towards the year\'s coupon income', () => {
   });
   assert.ok(with_.tax.couponIncome > without.tax.couponIncome, 'their coupons are taxable too');
 });
+
+// --- Liabilities stated in today's money -----------------------------------
+
+test('an escalating liability is uprated to the date it falls due', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [{ date: '2035-06-30', amount: 20000, escalation: 0.05 }],
+  });
+
+  const row = result.coverage[0];
+  assert.equal(row.statedAmount, 20000);
+  assert.ok(row.amount > 28000, `expected roughly nine years of 5%, got ${row.amount}`);
+  assert.equal(row.escalation, 0.05);
+  assert.ok(result.fullyFunded, 'and the ladder funds the uprated figure');
+});
+
+// The point of the feature: a nominal ladder against today's figure
+// under-funds a cost that rises.
+test('escalating costs more to fund than not escalating', () => {
+  const flat = buildLadder({ ...base, liabilities: [{ date: '2035-06-30', amount: 20000 }] });
+  const rising = buildLadder({
+    ...base,
+    liabilities: [{ date: '2035-06-30', amount: 20000, escalation: 0.05 }],
+  });
+  assert.ok(rising.totals.cost > flat.totals.cost * 1.3);
+});
+
+// A liability that has grown 50% between being entered and being funded should
+// not have to be reverse-engineered from the result.
+test('both the stated and the uprated totals are reported', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [{ date: '2035-06-30', amount: 20000, escalation: 0.05 }],
+  });
+  assert.equal(result.totals.liabilitiesAsStated, 20000);
+  assert.ok(result.totals.liabilities > result.totals.liabilitiesAsStated);
+});
+
+test('a plain liability is untouched and its coverage row unchanged', () => {
+  const result = buildLadder({ ...base, liabilities: [{ date: '2030-06-30', amount: 20000 }] });
+  assert.equal(result.coverage[0].amount, 20000);
+  assert.equal(result.coverage[0].escalation, undefined, 'no escalation fields where none was asked for');
+  assert.equal(result.totals.liabilitiesAsStated, result.totals.liabilities);
+});
+
+test('an escalating series uprates each occurrence to its own date', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [{ date: '2028-09-30', amount: 10000, escalation: 0.05, repeat: { every: 'year', count: 4 } }],
+  });
+
+  const amounts = result.coverage.map((c) => c.amount);
+  assert.equal(amounts.length, 4);
+  for (let i = 1; i < amounts.length; i++) {
+    assert.ok(amounts[i] > amounts[i - 1], 'each year costs more than the last');
+  }
+  for (const row of result.coverage) assert.equal(row.statedAmount, 10000);
+});
+
+// The coverage walk rebuilds the cash flow calendar from the holdings, and it
+// must credit that cash at exactly the rate the construction spent against.
+// Using the flat marginal rate there while construction used the blended
+// per-year rates left every taxed ladder reporting a shortfall it did not
+// have - small enough to look like rounding, and wrong on every rung.
+test('a taxed ladder is actually fully funded', () => {
+  for (const marginalRate of [0.2, 0.4, 0.45]) {
+    const result = buildLadder({
+      ...base,
+      marginalRate,
+      liabilities: [
+        { date: '2028-09-30', amount: 12000 },
+        { date: '2030-09-30', amount: 12000 },
+        { date: '2032-09-30', amount: 12000 },
+        { date: '2035-09-30', amount: 12000 },
+      ],
+    });
+
+    assert.ok(
+      result.fullyFunded,
+      `at ${marginalRate}: ${JSON.stringify(result.unfunded)}`
+    );
+    for (const row of result.coverage) assert.ok(row.covered, `${row.date} short at ${marginalRate}`);
+  }
+});
+
+// A universe with a gilt for each liability's window, so this exercises tax
+// and escalation together rather than the widened-search weakness that a
+// universe with gaps exposes (see ROADMAP.md item 13).
+test('a taxed escalating series is fully funded too', () => {
+  const matched = [
+    { isin: 'TEST0000M028', name: '1% Test 2028', coupon: 1, redemption: '2028-09-15' },
+    { isin: 'TEST0000M029', name: '1% Test 2029', coupon: 1, redemption: '2029-09-15' },
+    { isin: 'TEST0000M030', name: '1% Test 2030', coupon: 1, redemption: '2030-09-15' },
+    { isin: 'TEST0000M031', name: '1% Test 2031', coupon: 1, redemption: '2031-09-15' },
+    { isin: 'TEST0000M032', name: '1% Test 2032', coupon: 1, redemption: '2032-09-15' },
+  ];
+
+  const result = buildLadder({
+    ...base,
+    universe: matched,
+    marginalRate: 0.2,
+    liabilities: [{ date: '2028-09-30', amount: 12000, escalation: 0.05, repeat: { every: 'year', count: 5 } }],
+  });
+
+  assert.ok(result.fullyFunded, JSON.stringify(result.unfunded));
+  assert.equal(result.holdings.length, 5, 'one rung per liability');
+  // Each rung funds a liability that has grown since it was stated.
+  for (const row of result.coverage) assert.ok(row.amount > row.statedAmount);
+});
+
+// A liability with no gilt redeeming in its window makes the search widen, and
+// the chosen gilt's redemption then lands early enough to be credited to an
+// EARLIER liability than the one it was bought for - so the rung is sized for
+// one liability and its money funds another. The result says so rather than
+// hiding it: the liability reports a shortfall and the rung raises an
+// idle-cash warning. Pinned here so the behaviour cannot change silently
+// while ROADMAP.md item 13 is outstanding.
+test('a liability with no matching gilt reports a shortfall rather than a false ladder', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [
+      { date: '2028-09-30', amount: 12000 },
+      { date: '2029-09-30', amount: 12000 },
+      { date: '2031-09-30', amount: 12000 },
+    ],
+  });
+
+  assert.equal(result.fullyFunded, false, 'it must not claim to have funded these');
+  assert.ok(result.unfunded.length > 0, 'and must say which');
+  assert.ok(result.holdings.some((h) => h.widenedSearch), 'the widened search is what caused it');
+  assert.ok(result.warnings.some((w) => w.type === 'idle-cash'));
+});

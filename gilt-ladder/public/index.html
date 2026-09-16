@@ -71,6 +71,12 @@
 
       <section class="panel">
         <h2>Liabilities</h2>
+        <p class="hint block">
+          An amount that rises &mdash; school fees, care costs &mdash; can be entered in
+          <strong>today's money</strong> with a rate it rises at; it is then uprated to the date it
+          falls due. That is an assumption you state, applied to what you owe. The gilts funding it
+          are still nominal: this is not index-linked cover.
+        </p>
         <table id="liabilities" class="input-table">
           <thead>
             <tr>
@@ -78,6 +84,7 @@
               <th>Amount (&pound;)</th>
               <th>Repeats</th>
               <th class="num">Times</th>
+              <th class="num">Rises&nbsp;%/yr</th>
               <th><span class="sr-only">Remove</span></th>
             </tr>
           </thead>
@@ -280,7 +287,8 @@
               <thead>
                 <tr>
                   <th>Liability</th>
-                  <th class="num">Amount (&pound;)</th>
+                  <th class="num">Amount due (&pound;)</th>
+                  <th class="num">As stated (&pound;)</th>
                   <th>Covered</th>
                   <th class="num">Surplus carried (&pound;)</th>
                 </tr>

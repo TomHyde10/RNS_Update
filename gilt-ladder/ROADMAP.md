@@ -61,12 +61,28 @@ the tax logic the app's headline claim rests on (2), before adding scope.
       plus month-to-date cost drift: `parseCurves` already returns every
       business day in the workbook and `parseLatestCurve` discards all but
       the last.
-- [ ] **11. Escalating liabilities in today's money.** A liability stated in
+- [x] **11. Escalating liabilities in today's money.** A liability stated in
       today's money with an escalation rate, expanded to a nominal schedule
       before matching. Does not require index-linked gilts.
 - [ ] **12. Reinvestment assumption for idle cash.** Optional reinvestment of
       idle proceeds at the curve's own implied forward rate, labelled as an
       assumption. The zero-reinvestment default stays the default.
+
+- [ ] **13. Widened-search rungs fund the wrong liability.** Found while
+      building item 11, and *not* caused by it. When no gilt redeems inside a
+      liability's window the search widens and takes an earlier-maturing gilt.
+      That rung is sized for liability *i*, but `creditAgainstLiabilities`
+      assigns its redemption to the earliest liability the money can reach —
+      which is some *j < i* — so the rung funds a liability it was not bought
+      for and *i* is left short. The backward induction never revisits *i*.
+      Nothing is hidden: the liability reports a shortfall and the rung raises
+      an idle-cash warning, and `test/ladder.test.js` pins that. But the ladder
+      is still wrong, and it is wrong exactly when the universe does not line up
+      with the liability dates, which is the case a user most needs help with.
+      The fix is to pin a rung's redemption to the liability it was bought for
+      and let only its coupons fall to earlier ones — a change to the core
+      algorithm, which is why it is its own item rather than folded into
+      another.
 
 ## Deliberately not on the list
 

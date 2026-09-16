@@ -382,6 +382,28 @@ Deployment settings: `GILT_ALERT_EMAIL` (falls back to `NOTIFY_EMAIL_TO`),
 `GILT_ALERT_THRESHOLD_PERCENT`, plus the host's `RESEND_API_KEY` and
 `NOTIFY_EMAIL_FROM`. Which plans are watched is per-plan and lives on the plan.
 
+## Liabilities in today's money
+
+School fees and care costs rise; a nominal ladder built against today's figure
+silently under-funds them. A liability may carry an `escalation` rate, which
+means the amount is stated in **today's money** and uprated to the date it falls
+due — compounded annually on an ACT/365 year, matching the discounting
+convention.
+
+This is **not** index-linked gilt support and does not pretend to be. It is an
+assumption you state, applied to the liability side only; the assets are still
+nominal gilts whose cash flows do not rise with anything. The result reports the
+stated amount beside the uprated one for exactly that reason — a liability that
+has grown 60% between being typed in and being funded should not have to be
+reverse-engineered out of the answer.
+
+An escalation is a rate, not a percentage, and anything beyond ±0.5 is refused:
+`3` entered where `0.03` was meant would compound a liability into the millions
+without complaint.
+
+In a series, each occurrence is uprated to its **own** date, so a five-year run
+of school fees costs more each year.
+
 ## Liability series
 
 The shapes people actually fund repeat — school fees every September for five

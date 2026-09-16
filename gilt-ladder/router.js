@@ -8,7 +8,7 @@ const { getCurve } = require('./lib/curveStore');
 const { load: loadUniverse, activeAt, ISIN_RE } = require('./lib/universe');
 const { buildLadder, DEFAULTS } = require('./lib/ladder');
 const { toISO, addBusinessDays } = require('./lib/calendar');
-const { expandedLength, validateRepeat } = require('./lib/liabilities');
+const { expandedLength, validateRepeat, validateEscalation } = require('./lib/liabilities');
 const { sealPlan, openPlan, normalizePlan } = require('./lib/planToken');
 const planStore = require('./lib/planStore');
 const { runRecosting, DEFAULT_THRESHOLD_PERCENT, DEFAULT_HOUR_UTC } = require('./lib/recost');
@@ -124,6 +124,7 @@ function validateRequest(body) {
       if (!l || !/^\d{4}-\d{2}-\d{2}$/.test(String(l.date))) problems.push(`liability ${i + 1}: invalid date`);
       if (!(Number(l.amount) > 0)) problems.push(`liability ${i + 1}: amount must be positive`);
       problems.push(...validateRepeat(l && l.repeat, `liability ${i + 1}`));
+      problems.push(...validateEscalation(l && l.escalation, `liability ${i + 1}`));
     });
   }
 
