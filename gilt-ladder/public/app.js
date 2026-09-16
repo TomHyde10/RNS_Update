@@ -494,6 +494,179 @@ async function build() {
   }
 }
 
+// --- Plans -----------------------------------------------------------------
+//
+// A plan is what was entered, not what came back: reopening one rebuilds it
+// against today's curve rather than showing a stale answer that merely looks
+// current.
+
+function readPlan() {
+  const portfolioValue = $('portfolio-value').value;
+  return {
+    liabilities: readLiabilities(),
+    observedPrices: readObservedPrices(),
+    existingHoldings: readExistingHoldings(),
+    portfolioValue: portfolioValue === '' ? null : Number(portfolioValue),
+    marginalRate: Number($('marginal-rate').value),
+    lotSize: Number($('lot-size').value),
+    bufferBusinessDays: Number($('buffer').value),
+    accruedIncomeScheme: $('ais').checked ? 'auto' : false,
+  };
+}
+
+function writePlan(plan) {
+  $('portfolio-value').value = plan.portfolioValue == null ? '' : plan.portfolioValue;
+  $('marginal-rate').value = String(plan.marginalRate == null ? 0 : plan.marginalRate);
+  if (plan.lotSize != null) $('lot-size').value = plan.lotSize;
+  if (plan.bufferBusinessDays != null) $('buffer').value = plan.bufferBusinessDays;
+  $('ais').checked = plan.accruedIncomeScheme !== false;
+
+  for (const table of ['liabilities', 'prices', 'owned']) {
+    $(table).querySelector('tbody').innerHTML = '';
+  }
+  for (const l of plan.liabilities || []) {
+    addLiabilityRow(l.date, l.amount);
+    if (!l.repeat) continue;
+    const row = $('liabilities').querySelector('tbody').lastElementChild;
+    const select = row.querySelector('.liability-repeat');
+    const count = row.querySelector('.liability-count');
+    select.value = l.repeat.every;
+    count.disabled = false;
+    count.value = l.repeat.count;
+  }
+  if (!(plan.liabilities || []).length) addLiabilityRow();
+
+  for (const p of plan.observedPrices || []) addPriceRow(p.isin, p.clean);
+  for (const h of plan.existingHoldings || []) addOwnedRow(h.isin, h.nominal);
+  if ((plan.observedPrices || []).length) $('prices-panel').open = true;
+  if ((plan.existingHoldings || []).length) $('holdings-panel').open = true;
+}
+
+async function share() {
+  const plan = readPlan();
+  if (!plan.liabilities.length) {
+    setStatus('Add at least one liability before sharing.', true);
+    return;
+  }
+
+  try {
+    const res = await fetch('api/plan/share', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(plan),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      setStatus(body.error, true);
+      return;
+    }
+
+    const link = new URL(window.location.href);
+    link.search = `?plan=${body.token}`;
+    link.hash = '';
+    // Clipboard access needs a secure context and can be refused outright, so
+    // the address bar is updated either way - the link is then just there.
+    window.history.replaceState(null, '', link.search);
+    try {
+      await navigator.clipboard.writeText(link.href);
+      setStatus('Share link copied. It carries the whole plan, encrypted.');
+    } catch {
+      setStatus('Share link is now in the address bar - copy it from there.');
+    }
+  } catch (err) {
+    setStatus(`Could not create a share link: ${err.message}`, true);
+  }
+}
+
+async function refreshSavedPlans(selectId) {
+  const select = $('saved-plans');
+  let body;
+  try {
+    const res = await fetch('api/plans');
+    // 501 is the expected answer on a deployment with no database, not a
+    // failure: the save controls simply stay hidden.
+    if (!res.ok) return false;
+    body = await res.json();
+  } catch {
+    return false;
+  }
+
+  select.innerHTML =
+    '<option value="">Saved plans&hellip;</option>' +
+    body.plans.map((p) => `<option value="${p.id}">${p.label}</option>`).join('');
+  if (selectId) select.value = selectId;
+  $('delete-plan').hidden = !select.value;
+  return true;
+}
+
+async function savePlan() {
+  const plan = readPlan();
+  if (!plan.liabilities.length) {
+    setStatus('Add at least one liability before saving.', true);
+    return;
+  }
+
+  const existingId = $('saved-plans').value;
+  const suggested = existingId
+    ? $('saved-plans').selectedOptions[0].textContent
+    : `Plan of ${new Date().toLocaleDateString('en-GB')}`;
+  const label = window.prompt('Name this plan', suggested);
+  if (label == null) return;
+
+  // Saving under the same name as the plan currently open updates it; a new
+  // name makes a new plan, so renaming never silently forks.
+  const id = existingId && label === suggested ? existingId : undefined;
+
+  try {
+    const res = await fetch('api/plans', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label, plan, id }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      setStatus(body.error, true);
+      return;
+    }
+    await refreshSavedPlans(body.plan.id);
+    setStatus(`Saved as "${body.plan.label}".`);
+  } catch (err) {
+    setStatus(`Could not save: ${err.message}`, true);
+  }
+}
+
+async function loadSavedPlan(id) {
+  if (!id) {
+    $('delete-plan').hidden = true;
+    return;
+  }
+  try {
+    const body = await fetch(`api/plans/${encodeURIComponent(id)}`).then((r) => r.json());
+    if (!body.plan) {
+      setStatus('That plan could not be loaded.', true);
+      return;
+    }
+    writePlan(body.plan.plan);
+    $('delete-plan').hidden = false;
+    setStatus(`Loaded "${body.plan.label}". Build it to cost it against today's curve.`);
+  } catch (err) {
+    setStatus(`Could not load that plan: ${err.message}`, true);
+  }
+}
+
+async function deleteSavedPlan() {
+  const select = $('saved-plans');
+  const id = select.value;
+  if (!id) return;
+  if (!window.confirm(`Delete "${select.selectedOptions[0].textContent}"?`)) return;
+
+  await fetch(`api/plans/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  await refreshSavedPlans();
+  select.value = '';
+  $('delete-plan').hidden = true;
+  setStatus('Plan deleted.');
+}
+
 // The holdings from the most recent build, so "Add the gilts in this ladder"
 // can seed the price table with exactly the shortlist that matters.
 let lastHoldings = [];
@@ -503,6 +676,10 @@ async function init() {
   $('add-price').addEventListener('click', () => addPriceRow());
   $('add-owned').addEventListener('click', () => addOwnedRow());
   $('build').addEventListener('click', build);
+  $('share').addEventListener('click', share);
+  $('save').addEventListener('click', savePlan);
+  $('delete-plan').addEventListener('click', deleteSavedPlan);
+  $('saved-plans').addEventListener('change', (event) => loadSavedPlan(event.target.value));
   $('price-ladder').addEventListener('click', () => {
     for (const holding of lastHoldings) addPriceRow(holding.isin, holding.cleanPrice.toFixed(3));
     $('prices-panel').open = true;
@@ -514,7 +691,29 @@ async function init() {
   addLiabilityRow(`${year + 4}-09-30`, '25000');
   addLiabilityRow(`${year + 6}-09-30`, '25000');
 
-  setStatus('');
+  // A shared link wins over the seeded example: someone following a link came
+  // for that plan, not for a demonstration.
+  const token = new URLSearchParams(window.location.search).get('plan');
+  if (token) {
+    try {
+      const body = await fetch(`api/plan?t=${encodeURIComponent(token)}`).then((r) => r.json());
+      if (body.plan) {
+        writePlan(body.plan);
+        setStatus('Opened a shared plan. Build it to cost it against today\'s curve.');
+      } else {
+        setStatus(body.error || 'That share link could not be opened.', true);
+      }
+    } catch (err) {
+      setStatus(`Could not open that share link: ${err.message}`, true);
+    }
+  }
+
+  // Saving needs a database. Where there is none the controls stay hidden
+  // rather than offering something that would fail on use.
+  if (await refreshSavedPlans()) {
+    $('save').hidden = false;
+    $('saved-plans').hidden = false;
+  }
 
   try {
     const universe = await fetch('api/universe').then((r) => r.json());

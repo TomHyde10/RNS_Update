@@ -146,6 +146,12 @@
       <section class="panel">
         <div class="actions">
           <button id="build" type="button" class="primary">Build ladder</button>
+          <button id="share" type="button" class="secondary">Copy share link</button>
+          <button id="save" type="button" class="secondary" hidden>Save plan</button>
+          <select id="saved-plans" hidden aria-label="Saved plans">
+            <option value="">Saved plans&hellip;</option>
+          </select>
+          <button id="delete-plan" type="button" class="link" hidden>Delete</button>
         </div>
         <p id="status" class="status" role="status"></p>
       </section>

@@ -9,6 +9,8 @@ const { load: loadUniverse, activeAt, ISIN_RE } = require('./lib/universe');
 const { buildLadder, DEFAULTS } = require('./lib/ladder');
 const { toISO, addBusinessDays } = require('./lib/calendar');
 const { expandedLength, validateRepeat } = require('./lib/liabilities');
+const { sealPlan, openPlan, normalizePlan } = require('./lib/planToken');
+const planStore = require('./lib/planStore');
 
 const MOUNT = '/gilt-ladder';
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -256,6 +258,94 @@ async function handleLadder(req, res) {
   }
 }
 
+// A plan is only ever stored or sealed after it has passed exactly the same
+// validation a build request does. A token is authenticated, which proves this
+// server sealed it - not that what it sealed is still a plan this version is
+// willing to run.
+async function readPlanBody(req, res) {
+  let body;
+  try {
+    body = JSON.parse(await readBody(req));
+  } catch (err) {
+    sendJson(res, 400, { error: 'invalid JSON body', details: err.message });
+    return null;
+  }
+
+  const plan = normalizePlan(body.plan == null ? body : body.plan);
+  const problems = validateRequest(plan);
+  if (problems.length) {
+    sendJson(res, 400, { error: 'invalid plan', details: problems });
+    return null;
+  }
+  return { plan, label: body.label, id: body.id };
+}
+
+// Saved plans need a database; shareable links do not. Keeping them on
+// separate routes means a deployment with no DATABASE_URL still shares plans
+// rather than losing the feature wholesale.
+async function handlePlans(req, res, subPath, url) {
+  if (req.method === 'POST' && subPath === '/api/plan/share') {
+    const parsed = await readPlanBody(req, res);
+    if (!parsed) return;
+    const { token, status, error } = sealPlan(parsed.plan);
+    if (error) {
+      sendJson(res, status, { error });
+      return;
+    }
+    sendJson(res, 200, { token, path: `${MOUNT}/?plan=${token}` });
+    return;
+  }
+
+  if (req.method === 'GET' && subPath === '/api/plan') {
+    const { plan, status, error } = openPlan(url.searchParams.get('t'));
+    if (error) {
+      sendJson(res, status, { error });
+      return;
+    }
+    sendJson(res, 200, { plan });
+    return;
+  }
+
+  if (!planStore.enabled) {
+    sendJson(res, 501, {
+      error: "Saving plans isn't enabled on this deployment (DATABASE_URL isn't set). Use a shareable link instead.",
+    });
+    return;
+  }
+
+  const id = subPath.startsWith('/api/plans/') ? decodeURIComponent(subPath.slice('/api/plans/'.length)) : null;
+
+  if (req.method === 'GET' && subPath === '/api/plans') {
+    sendJson(res, 200, { plans: await planStore.list() });
+    return;
+  }
+
+  if (req.method === 'POST' && subPath === '/api/plans') {
+    const parsed = await readPlanBody(req, res);
+    if (!parsed) return;
+    try {
+      sendJson(res, 200, { plan: await planStore.save(parsed) });
+    } catch (err) {
+      sendJson(res, 409, { error: err.message });
+    }
+    return;
+  }
+
+  if (id && req.method === 'GET') {
+    const record = await planStore.get(id);
+    sendJson(res, record ? 200 : 404, record ? { plan: record } : { error: 'no such plan' });
+    return;
+  }
+
+  if (id && req.method === 'DELETE') {
+    const removed = await planStore.remove(id);
+    sendJson(res, removed ? 200 : 404, removed ? { ok: true } : { error: 'no such plan' });
+    return;
+  }
+
+  sendJson(res, 405, { error: 'method not allowed' });
+}
+
 // True when `pathname` belongs to the Gilt Ladder rather than to RNS.
 const owns = (pathname) => pathname === MOUNT || pathname.startsWith(`${MOUNT}/`);
 
@@ -285,6 +375,11 @@ async function handle(req, res, url) {
 
     if (req.method === 'POST' && subPath === '/api/ladder') {
       await handleLadder(req, res);
+      return;
+    }
+
+    if (subPath.startsWith('/api/plan')) {
+      await handlePlans(req, res, subPath, url);
       return;
     }
 

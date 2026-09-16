@@ -206,6 +206,45 @@ The gilt universe also warns once its DMO export is more than 180 days old. A
 stale committed file is indistinguishable from a fresh one from the outside, and
 a gilt issued since the last export simply cannot be selected.
 
+## Saving and sharing a plan
+
+A plan is what you entered — liabilities, tax rate, quotes, what you already
+hold — not what came back. Reopening one **rebuilds it against today's curve**,
+so a saved plan is never a stale answer that merely looks current.
+
+There are two mechanisms because they answer different questions:
+
+**A share link** needs no storage. The whole plan is deflated, encrypted with
+AES-256-GCM and put in the URL as one opaque token. A plan says what you owe and
+roughly what you are worth, and that does not belong in browser history, hosting
+request logs, a screenshot or a link preview. An edited or truncated token fails
+to open rather than quietly decrypting to some other plan. This hides the link's
+contents from anyone who only sees the URL — not from whoever opens it, since
+the server decrypts it for them; `APP_PASSWORD` remains the access control.
+
+The secret is the host's `VIEW_TOKEN_SECRET`, so a deployment has one secret
+rather than two, but the HKDF `info` label differs from the RNS view token's.
+Same secret, different key: an RNS watchlist link cannot be opened as a plan or
+the reverse, which the tests assert against the real `lib/viewToken.js`. Without
+the secret, sharing reports itself unavailable rather than failing.
+
+**A saved plan** needs `DATABASE_URL`. It stays put so it can be reopened by
+name and — the real reason it exists — re-costed on a schedule without you being
+there. There is deliberately **no in-memory fallback**: a saved plan that
+vanishes on the next restart is worse than no saving at all, because it looks
+like it worked. Without a database the save controls stay hidden and sharing
+still works, so the feature degrades by half rather than disappearing.
+
+`pg` is required lazily, inside the connection pool, so the Gilt Ladder's "no
+runtime dependencies of its own" stays true on every deployment that leaves
+saving off.
+
+A token is authenticated, which proves this server sealed it — not that what it
+sealed is still acceptable. Plans are therefore re-validated on the way out as
+well as in, against exactly the validation a build request gets, and only
+known fields are carried: without that the request body would be an open
+channel into `buildLadder`'s options.
+
 ## Liability series
 
 The shapes people actually fund repeat — school fees every September for five
@@ -285,6 +324,10 @@ records the runner-up for each rung so the gap is visible.
 | `GET /gilt-ladder/api/universe` | The gilt universe and whether it is real or sample |
 | `GET /gilt-ladder/api/curve` | The cached curve, its date, and whether it is stale |
 | `GET /gilt-ladder/api/health` | Liveness; 503 if the universe failed validation |
+| `POST /gilt-ladder/api/plan/share` | Seal a plan into a shareable token; 501 without `VIEW_TOKEN_SECRET` |
+| `GET /gilt-ladder/api/plan?t=` | Open a shared plan token |
+| `GET/POST /gilt-ladder/api/plans` | List or save plans; 501 without `DATABASE_URL` |
+| `GET/DELETE /gilt-ladder/api/plans/:id` | Read or delete one saved plan |
 
 Every ladder response carries a `provenance` block — price basis, curve date,
 staleness, universe source — so a number that looks like a price can never
@@ -302,7 +345,10 @@ Nothing extra: it ships with every RNS deployment that runs `server.js`
 - **Authentication** is RNS's `APP_USERNAME`/`APP_PASSWORD` (see the root
   README's "Authentication"). The username defaults to `admin`; the standalone
   app's old `gilt` default no longer applies.
-- **Storage**: none needed. `GILT_LADDER_DATA_DIR` (default
+- **Storage**: none needed for the ladder itself. `DATABASE_URL` (the host's,
+  already used by RNS) additionally enables saved plans; `VIEW_TOKEN_SECRET`
+  (also the host's) enables share links. Both are optional and each degrades to
+  the feature simply being unavailable. `GILT_LADDER_DATA_DIR` (default
   `gilt-ladder/data/`) caches the curve so a restart does not refetch. An
   ephemeral filesystem is fine: the app just refetches, and falls back to the
   last good curve if the Bank is unreachable.
@@ -328,6 +374,8 @@ lib/bondMath.js            Pricing, yield, duration
 lib/ladder.js              The ladder construction
 lib/universe.js            Universe loading and strict validation
 lib/liabilities.js         Liability series expansion
+lib/planToken.js           Encrypted shareable plan links
+lib/planStore.js           Optional Postgres storage for saved plans
 lib/zip.js                 Minimal zip reader (so no unzip binary is needed)
 lib/xlsx.js                Minimal xlsx reader for the DMO export
 scripts/build-universe.js  DMO export -> config/gilts.js

@@ -43,7 +43,7 @@ the tax logic the app's headline claim rests on (2), before adding scope.
       shortfall rather than the whole liability.
 - [x] **10. Liability series generator.** Repeat/frequency/count expansion for
       the shapes that are actually common (school fees, drawdown).
-- [ ] **6. Saved plans and shareable links.** Postgres via the `cacheStore`
+- [x] **6. Saved plans and shareable links.** Postgres via the `cacheStore`
       pattern, sharing via the existing AES-256-GCM `viewToken`. No new
       dependency, no new auth story, degrades to off without `DATABASE_URL`.
 - [ ] **7. Re-cost alerts.** Re-price saved plans against each new daily curve

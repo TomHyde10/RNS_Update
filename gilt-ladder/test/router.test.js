@@ -170,3 +170,87 @@ describe('universe staleness', () => {
     assert.equal(giltLadder.universeStaleness(null, now), null);
   });
 });
+
+describe('plan sharing', () => {
+  const plan = { liabilities: [{ date: '2030-06-30', amount: 25000 }], marginalRate: 0.4 };
+
+  // Its own server: these routes never reach the Bank of England, so unlike
+  // /api/ladder they can be driven over HTTP without the network.
+  let server;
+  let base;
+
+  before(async () => {
+    server = http.createServer((req, res) => {
+      const url = new URL(req.url, 'http://localhost');
+      giltLadder.handle(req, res, url);
+    });
+    await new Promise((resolve) => server.listen(0, resolve));
+    base = `http://localhost:${server.address().port}`;
+  });
+
+  after(() => server.close());
+
+  it('refuses to seal a plan that would not build', () => {
+    // The same validation a build request gets: a token must never carry a
+    // plan the server would then refuse to run.
+    const problems = giltLadder.validateRequest({ liabilities: [{ date: 'nonsense', amount: 1 }] });
+    assert.ok(problems.length);
+  });
+
+  it('is unavailable rather than broken without a secret', async () => {
+    const saved = process.env.VIEW_TOKEN_SECRET;
+    delete process.env.VIEW_TOKEN_SECRET;
+    try {
+      const res = await fetch(`${base}/gilt-ladder/api/plan/share`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(plan),
+      });
+      assert.equal(res.status, 501);
+      assert.match((await res.json()).error, /VIEW_TOKEN_SECRET/);
+    } finally {
+      if (saved) process.env.VIEW_TOKEN_SECRET = saved;
+    }
+  });
+
+  it('seals a plan and opens it again over HTTP', async () => {
+    const saved = process.env.VIEW_TOKEN_SECRET;
+    process.env.VIEW_TOKEN_SECRET = 'c'.repeat(48);
+    try {
+      const sealed = await fetch(`${base}/gilt-ladder/api/plan/share`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(plan),
+      }).then((r) => r.json());
+
+      assert.ok(sealed.token);
+      assert.match(sealed.path, /^\/gilt-ladder\/\?plan=/);
+
+      const opened = await fetch(
+        `${base}/gilt-ladder/api/plan?t=${encodeURIComponent(sealed.token)}`
+      ).then((r) => r.json());
+      assert.equal(opened.plan.liabilities[0].amount, 25000);
+      assert.equal(opened.plan.marginalRate, 0.4);
+    } finally {
+      if (saved) process.env.VIEW_TOKEN_SECRET = saved;
+      else delete process.env.VIEW_TOKEN_SECRET;
+    }
+  });
+
+  it('rejects an invalid plan before sealing it', async () => {
+    const res = await fetch(`${base}/gilt-ladder/api/plan/share`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ liabilities: [] }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  // Saving needs a database; sharing does not. A deployment without one keeps
+  // sharing rather than losing the whole feature.
+  it('says saving is unavailable without a database', async () => {
+    const res = await fetch(`${base}/gilt-ladder/api/plans`);
+    assert.equal(res.status, 501);
+    assert.match((await res.json()).error, /DATABASE_URL/);
+  });
+});
