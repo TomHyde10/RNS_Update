@@ -41,7 +41,7 @@ the tax logic the app's headline claim rests on (2), before adding scope.
 - [x] **5. Existing holdings as an input.** Credit gilts already owned against
       the liabilities before the backward pass, so the ladder funds the
       shortfall rather than the whole liability.
-- [ ] **10. Liability series generator.** Repeat/frequency/count expansion for
+- [x] **10. Liability series generator.** Repeat/frequency/count expansion for
       the shapes that are actually common (school fees, drawdown).
 - [ ] **6. Saved plans and shareable links.** Postgres via the `cacheStore`
       pattern, sharing via the existing AES-256-GCM `viewToken`. No new

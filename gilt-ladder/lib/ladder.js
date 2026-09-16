@@ -26,6 +26,7 @@ const {
   streamDuration,
 } = require('./bondMath');
 const { discountTo } = require('./curve');
+const { expand: expandLiabilities } = require('./liabilities');
 
 const DEFAULTS = {
   // Cash must land this many business days before the liability it funds.
@@ -189,7 +190,9 @@ function buildLadder(request) {
     options.settlement || addBusinessDays(curve.date, options.settlementBusinessDays)
   );
 
-  const liabilities = [...request.liabilities]
+  // Series are expanded first, so nothing downstream - matching, coverage,
+  // the chart - ever sees a repeating liability.
+  const liabilities = expandLiabilities(request.liabilities)
     .map((l) => ({ date: toISO(l.date), amount: Number(l.amount) }))
     .sort((a, b) => a.date.localeCompare(b.date));
 

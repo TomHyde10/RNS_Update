@@ -24,6 +24,16 @@ const shortDate = (iso) =>
     timeZone: 'UTC',
   });
 
+// The repeating shapes people actually fund: school fees every September for
+// five years, drawdown every year for twenty-five. One row, not twenty-five.
+const REPEATS = [
+  ['', 'Once'],
+  ['month', 'Monthly'],
+  ['quarter', 'Quarterly'],
+  ['half-year', 'Half-yearly'],
+  ['year', 'Yearly'],
+];
+
 function addLiabilityRow(date = '', amount = '') {
   const tbody = $('liabilities').querySelector('tbody');
   const tr = document.createElement('tr');
@@ -45,6 +55,37 @@ function addLiabilityRow(date = '', amount = '') {
   amountInput.value = amount;
   amountCell.appendChild(amountInput);
 
+  const repeatCell = document.createElement('td');
+  const repeatSelect = document.createElement('select');
+  repeatSelect.className = 'liability-repeat';
+  for (const [value, label] of REPEATS) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    repeatSelect.appendChild(option);
+  }
+  repeatCell.appendChild(repeatSelect);
+
+  const countCell = document.createElement('td');
+  const countInput = document.createElement('input');
+  countInput.type = 'number';
+  countInput.min = '1';
+  countInput.max = '600';
+  countInput.step = '1';
+  countInput.className = 'liability-count';
+  countInput.value = '1';
+  countInput.disabled = true;
+  countCell.appendChild(countInput);
+
+  // A count only means anything once there is something to repeat, and it must
+  // go back to 1 if the repeat is cleared - otherwise a stale count silently
+  // survives as "once".
+  repeatSelect.addEventListener('change', () => {
+    countInput.disabled = !repeatSelect.value;
+    if (!repeatSelect.value) countInput.value = '1';
+    else if (countInput.value === '1') countInput.value = '5';
+  });
+
   const removeCell = document.createElement('td');
   const remove = document.createElement('button');
   remove.type = 'button';
@@ -56,7 +97,7 @@ function addLiabilityRow(date = '', amount = '') {
   });
   removeCell.appendChild(remove);
 
-  tr.append(dateCell, amountCell, removeCell);
+  tr.append(dateCell, amountCell, repeatCell, countCell, removeCell);
   tbody.appendChild(tr);
 }
 
@@ -155,10 +196,17 @@ function readObservedPrices() {
 
 function readLiabilities() {
   return [...document.querySelectorAll('#liabilities tbody tr')]
-    .map((tr) => ({
-      date: tr.querySelector('.liability-date').value,
-      amount: Number(tr.querySelector('.liability-amount').value),
-    }))
+    .map((tr) => {
+      const every = tr.querySelector('.liability-repeat').value;
+      const count = Number(tr.querySelector('.liability-count').value);
+      return {
+        date: tr.querySelector('.liability-date').value,
+        amount: Number(tr.querySelector('.liability-amount').value),
+        // Omitted entirely rather than sent as a repeat of one, so a plain
+        // liability goes over the wire as a plain liability.
+        ...(every && count > 1 ? { repeat: { every, count } } : {}),
+      };
+    })
     .filter((l) => l.date && l.amount > 0);
 }
 
@@ -465,6 +513,8 @@ async function init() {
   addLiabilityRow(`${year + 2}-09-30`, '25000');
   addLiabilityRow(`${year + 4}-09-30`, '25000');
   addLiabilityRow(`${year + 6}-09-30`, '25000');
+
+  setStatus('');
 
   try {
     const universe = await fetch('api/universe').then((r) => r.json());

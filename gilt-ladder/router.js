@@ -8,6 +8,7 @@ const { getCurve } = require('./lib/curveStore');
 const { load: loadUniverse, activeAt, ISIN_RE } = require('./lib/universe');
 const { buildLadder, DEFAULTS } = require('./lib/ladder');
 const { toISO, addBusinessDays } = require('./lib/calendar');
+const { expandedLength, validateRepeat } = require('./lib/liabilities');
 
 const MOUNT = '/gilt-ladder';
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -109,12 +110,15 @@ function validateRequest(body) {
   const problems = [];
   if (!Array.isArray(body.liabilities) || !body.liabilities.length) {
     problems.push('liabilities must be a non-empty array');
-  } else if (body.liabilities.length > MAX_LIABILITIES) {
-    problems.push(`at most ${MAX_LIABILITIES} liabilities`);
+    // A series is counted before it is expanded, so an over-large request is
+    // refused without first building the list it asked for.
+  } else if (expandedLength(body.liabilities) > MAX_LIABILITIES) {
+    problems.push(`at most ${MAX_LIABILITIES} liabilities once repeats are expanded`);
   } else {
     body.liabilities.forEach((l, i) => {
       if (!l || !/^\d{4}-\d{2}-\d{2}$/.test(String(l.date))) problems.push(`liability ${i + 1}: invalid date`);
       if (!(Number(l.amount) > 0)) problems.push(`liability ${i + 1}: amount must be positive`);
+      problems.push(...validateRepeat(l && l.repeat, `liability ${i + 1}`));
     });
   }
 

@@ -567,3 +567,27 @@ test('a quoted price values an existing holding too', () => {
   assert.equal(result.existing[0].priceSource, 'observed');
   assert.ok(Math.abs(result.existing[0].cleanPrice - 80) < 1e-9);
 });
+
+test('a repeating liability is expanded before the ladder is built', () => {
+  const series = buildLadder({
+    ...base,
+    liabilities: [{ date: '2028-09-30', amount: 10000, repeat: { every: 'year', count: 4 } }],
+  });
+  const written = buildLadder({
+    ...base,
+    liabilities: [
+      { date: '2028-09-30', amount: 10000 },
+      { date: '2029-09-30', amount: 10000 },
+      { date: '2030-09-30', amount: 10000 },
+      { date: '2031-09-30', amount: 10000 },
+    ],
+  });
+
+  assert.equal(series.coverage.length, 4);
+  assert.deepEqual(
+    series.holdings.map((h) => [h.isin, h.nominal]),
+    written.holdings.map((h) => [h.isin, h.nominal]),
+    'a series and the list it stands for must build the same ladder'
+  );
+  assert.ok(Math.abs(series.totals.cost - written.totals.cost) < 1e-9);
+});

@@ -206,6 +206,23 @@ The gilt universe also warns once its DMO export is more than 180 days old. A
 stale committed file is indistinguishable from a fresh one from the outside, and
 a gilt issued since the last export simply cannot be selected.
 
+## Liability series
+
+The shapes people actually fund repeat — school fees every September for five
+years, drawdown every year for twenty-five — and typing those a row at a time is
+the main reason a real plan never gets entered at all. A liability may carry a
+`repeat: { every, count }` block, with `every` one of `month`, `quarter`,
+`half-year` or `year`.
+
+Expansion happens before anything else runs, so the ladder, the coverage walk
+and the chart never see a repeating liability: a series and the list it stands
+for build an identical ladder, which the tests assert directly.
+
+Each date is computed as an offset from the **first** one, never by stepping off
+the previous one — the same trap `giltCashflows.js` avoids for coupon dates. A
+series starting 31 January must go 28 February and then back to 31 March; step
+iteratively and the clamp compounds, leaving every later date a day early.
+
 ## Gilts you already own
 
 Nobody starts from cash. Give the app a list of `{ isin, nominal }` and those
@@ -310,6 +327,7 @@ lib/curveStore.js          Daily cache with graceful degradation
 lib/bondMath.js            Pricing, yield, duration
 lib/ladder.js              The ladder construction
 lib/universe.js            Universe loading and strict validation
+lib/liabilities.js         Liability series expansion
 lib/zip.js                 Minimal zip reader (so no unzip binary is needed)
 lib/xlsx.js                Minimal xlsx reader for the DMO export
 scripts/build-universe.js  DMO export -> config/gilts.js
