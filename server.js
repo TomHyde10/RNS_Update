@@ -738,8 +738,35 @@ async function scheduleNextDigestCheck() {
   digestCheckTimer = setTimeout(async () => {
     await runDueDigests();
     await runDuePush();
+    await runGiltRecosting();
     scheduleNextDigestCheck();
   }, intervalMs).unref();
+}
+
+// The Gilt Ladder decides which saved plans are due to be re-costed and what
+// is worth saying about a move (gilt-ladder/lib/recost.js, unit-tested there
+// against fakes). It requires no RNS code, so the transport is supplied from
+// here instead: it states the policy, this wires in the means.
+//
+// Recipient and threshold are deployment settings, not per-plan ones - which
+// plans are watched is per-plan, and lives on the plan itself.
+function sendGiltAlert({ subject, text }) {
+  const to = process.env.GILT_ALERT_EMAIL || process.env.NOTIFY_EMAIL_TO;
+  const from = process.env.NOTIFY_EMAIL_FROM;
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!to || !from || !apiKey) {
+    throw new Error('email is not configured (needs RESEND_API_KEY, NOTIFY_EMAIL_FROM and GILT_ALERT_EMAIL)');
+  }
+  const { Resend } = require('resend');
+  return new Resend(apiKey).emails.send({ from, to, subject, text });
+}
+
+function runGiltRecosting() {
+  const threshold = Number(process.env.GILT_ALERT_THRESHOLD_PERCENT);
+  return giltLadder.checkRecosting({
+    send: sendGiltAlert,
+    thresholdPercent: Number.isFinite(threshold) ? threshold : undefined,
+  });
 }
 
 server.listen(PORT, () => {
@@ -748,6 +775,11 @@ server.listen(PORT, () => {
     runDueDigests(); // catch up on anything due right after a cold start
     runDuePush();
     scheduleNextDigestCheck();
+  } else if (require.main === module) {
+    // No digests to poll for, but saved gilt plans may still want re-costing,
+    // so the loop still has to turn. Hourly is plenty: re-costing is once a
+    // day, gated on the curve having been published.
+    setInterval(runGiltRecosting, 60 * 60 * 1000).unref();
   }
   // Only when run directly - test/subscriptionsApi.test.js also starts this
   // server, and its curve warm-up would otherwise reach out to the Bank of

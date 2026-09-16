@@ -245,6 +245,39 @@ well as in, against exactly the validation a build request gets, and only
 known fields are carried: without that the request body would be an open
 channel into `buildLadder`'s options.
 
+## Watching a plan
+
+The cost of funding a plan moves every day the curve moves, and nobody reopens
+a page to find that out. Tick **Watch** on a saved plan and it is re-costed
+against each new curve; you are emailed when something is worth saying. It needs
+no new data — the curve is already fetched daily for the app itself.
+
+Two things count as worth saying:
+
+- **The cost moved** by more than the threshold (1% by default). Smaller moves
+  are noise; an alert every morning is one nobody reads.
+- **The plan stopped being fully funded**, at any size of move. That is a change
+  in kind rather than degree, and it is the whole reason to watch a plan rather
+  than build it once. It fires on the transition only, so a plan that is already
+  short does not re-alert daily.
+
+A plan is re-costed whether or not an alert follows, because the stored cost is
+the baseline the next comparison is made against — skipping that write would
+make every later move look as though it happened in a single day. A plan that
+fails to cost is reported and skipped, so one unpriceable plan cannot silence
+every other alert, and it keeps its old baseline rather than losing it.
+
+`lib/recost.js` holds the policy and nothing else: the store, the ladder
+builder, the clock and the sender are all injected, so it is tested against
+fakes with no Postgres, no Resend and no waiting on real timers — the same shape
+as the host's `lib/digestScheduler.js`. The Gilt Ladder requires no RNS code, so
+`server.js` supplies the transport: the Gilt Ladder states the policy, the
+composition root wires in the means to act on it.
+
+Deployment settings: `GILT_ALERT_EMAIL` (falls back to `NOTIFY_EMAIL_TO`),
+`GILT_ALERT_THRESHOLD_PERCENT`, plus the host's `RESEND_API_KEY` and
+`NOTIFY_EMAIL_FROM`. Which plans are watched is per-plan and lives on the plan.
+
 ## Liability series
 
 The shapes people actually fund repeat — school fees every September for five
@@ -327,7 +360,7 @@ records the runner-up for each rung so the gap is visible.
 | `POST /gilt-ladder/api/plan/share` | Seal a plan into a shareable token; 501 without `VIEW_TOKEN_SECRET` |
 | `GET /gilt-ladder/api/plan?t=` | Open a shared plan token |
 | `GET/POST /gilt-ladder/api/plans` | List or save plans; 501 without `DATABASE_URL` |
-| `GET/DELETE /gilt-ladder/api/plans/:id` | Read or delete one saved plan |
+| `GET/PATCH/DELETE /gilt-ladder/api/plans/:id` | Read, watch/unwatch, or delete one saved plan |
 
 Every ladder response carries a `provenance` block — price basis, curve date,
 staleness, universe source — so a number that looks like a price can never
@@ -376,6 +409,7 @@ lib/universe.js            Universe loading and strict validation
 lib/liabilities.js         Liability series expansion
 lib/planToken.js           Encrypted shareable plan links
 lib/planStore.js           Optional Postgres storage for saved plans
+lib/recost.js              Daily re-costing policy and alert wording
 lib/zip.js                 Minimal zip reader (so no unzip binary is needed)
 lib/xlsx.js                Minimal xlsx reader for the DMO export
 scripts/build-universe.js  DMO export -> config/gilts.js

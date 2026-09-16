@@ -46,7 +46,7 @@ the tax logic the app's headline claim rests on (2), before adding scope.
 - [x] **6. Saved plans and shareable links.** Postgres via the `cacheStore`
       pattern, sharing via the existing AES-256-GCM `viewToken`. No new
       dependency, no new auth story, degrades to off without `DATABASE_URL`.
-- [ ] **7. Re-cost alerts.** Re-price saved plans against each new daily curve
+- [x] **7. Re-cost alerts.** Re-price saved plans against each new daily curve
       and report the drift, reusing the existing digest scheduler, Resend and
       web-push. Needs no new data: the curve is already fetched daily.
 - [ ] **8. Exports.** CSV dealing list (the artefact you take to a broker),

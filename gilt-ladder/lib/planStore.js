@@ -54,6 +54,19 @@ function ensureSchema() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
+    // Added for re-costing (lib/recost.js). Written as ALTERs rather than
+    // folded into the CREATE above so a database created by an earlier version
+    // gains them too, without a migration step anyone has to remember.
+    schemaReady = schemaReady.then(() =>
+      getPool().query(`
+        ALTER TABLE gilt_plans
+          ADD COLUMN IF NOT EXISTS alerts_enabled BOOLEAN NOT NULL DEFAULT false,
+          ADD COLUMN IF NOT EXISTS last_cost NUMERIC,
+          ADD COLUMN IF NOT EXISTS last_curve_date TEXT,
+          ADD COLUMN IF NOT EXISTS last_fully_funded BOOLEAN,
+          ADD COLUMN IF NOT EXISTS last_costed_at TIMESTAMPTZ
+      `)
+    );
   }
   return schemaReady;
 }
@@ -67,12 +80,22 @@ const cleanLabel = (label) => {
   return (text || 'Untitled plan').slice(0, MAX_LABEL_LENGTH);
 };
 
+const iso = (value) => (value instanceof Date ? value.toISOString() : value || null);
+
 const toRecord = (row) => ({
   id: row.id,
   label: row.label,
   plan: row.plan,
-  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
-  updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
+  alertsEnabled: Boolean(row.alerts_enabled),
+  // NUMERIC comes back from pg as a string, since not every value fits a
+  // double exactly. A cost is pounds and pence, so converting is safe here -
+  // but it has to be done, or the drift comparison would subtract strings.
+  lastCost: row.last_cost == null ? null : Number(row.last_cost),
+  lastCurveDate: row.last_curve_date || null,
+  lastFullyFunded: row.last_fully_funded == null ? null : Boolean(row.last_fully_funded),
+  lastCostedAt: iso(row.last_costed_at),
+  createdAt: iso(row.created_at),
+  updatedAt: iso(row.updated_at),
 });
 
 async function save({ id, label, plan }) {
@@ -106,14 +129,14 @@ async function save({ id, label, plan }) {
 async function list() {
   await ensureSchema();
   const { rows } = await getPool().query(
-    'SELECT id, label, created_at, updated_at FROM gilt_plans ORDER BY updated_at DESC'
+    `SELECT id, label, alerts_enabled, last_cost, last_curve_date, last_fully_funded,
+            last_costed_at, created_at, updated_at
+       FROM gilt_plans ORDER BY updated_at DESC`
   );
-  return rows.map((row) => ({
-    id: row.id,
-    label: row.label,
-    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
-    updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
-  }));
+  return rows.map((row) => {
+    const { plan, ...rest } = toRecord({ ...row, plan: null });
+    return rest;
+  });
 }
 
 // Full records including plan contents - what a scheduled re-costing needs.
@@ -129,10 +152,47 @@ async function get(id) {
   return rows.length ? toRecord(rows[0]) : null;
 }
 
+// Whether a plan is watched. Kept apart from save() so toggling it from a list
+// cannot overwrite the plan itself with whatever the page last had in its form.
+async function setAlerts(id, enabled) {
+  await ensureSchema();
+  const { rows } = await getPool().query(
+    'UPDATE gilt_plans SET alerts_enabled = $2 WHERE id = $1 RETURNING *',
+    [id, Boolean(enabled)]
+  );
+  return rows.length ? toRecord(rows[0]) : null;
+}
+
+// The baseline the next comparison is made against. Written whether or not an
+// alert followed: skipping it would make every later move look as though it
+// had happened in a single day.
+async function recordCosting(id, { cost, curveDate, fullyFunded, at }) {
+  await ensureSchema();
+  const { rows } = await getPool().query(
+    `UPDATE gilt_plans
+        SET last_cost = $2, last_curve_date = $3, last_fully_funded = $4, last_costed_at = $5
+      WHERE id = $1 RETURNING *`,
+    [id, cost, curveDate, fullyFunded, at || new Date().toISOString()]
+  );
+  return rows.length ? toRecord(rows[0]) : null;
+}
+
 async function remove(id) {
   await ensureSchema();
   const { rowCount } = await getPool().query('DELETE FROM gilt_plans WHERE id = $1', [id]);
   return rowCount > 0;
 }
 
-module.exports = { enabled, save, list, all, get, remove, cleanLabel, MAX_PLANS, MAX_LABEL_LENGTH };
+module.exports = {
+  enabled,
+  save,
+  list,
+  all,
+  get,
+  remove,
+  setAlerts,
+  recordCosting,
+  cleanLabel,
+  MAX_PLANS,
+  MAX_LABEL_LENGTH,
+};

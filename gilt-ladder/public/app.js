@@ -595,8 +595,42 @@ async function refreshSavedPlans(selectId) {
     '<option value="">Saved plans&hellip;</option>' +
     body.plans.map((p) => `<option value="${p.id}">${p.label}</option>`).join('');
   if (selectId) select.value = selectId;
-  $('delete-plan').hidden = !select.value;
+  savedPlans = body.plans;
+  showPlanControls();
   return true;
+}
+
+// Watching, deleting and the watch state all belong to whichever plan is
+// selected, so they move together rather than being toggled in three places.
+function showPlanControls() {
+  const id = $('saved-plans').value;
+  const record = savedPlans.find((p) => p.id === id);
+  $('delete-plan').hidden = !record;
+  $('watch-label').hidden = !record;
+  $('watch').checked = Boolean(record && record.alertsEnabled);
+}
+
+async function setWatch(enabled) {
+  const id = $('saved-plans').value;
+  if (!id) return;
+  try {
+    const res = await fetch(`api/plans/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ alertsEnabled: enabled }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
+    const record = savedPlans.find((p) => p.id === id);
+    if (record) record.alertsEnabled = enabled;
+    setStatus(
+      enabled
+        ? 'Watching. This plan is re-costed daily against the new curve, and you are emailed when it moves.'
+        : 'No longer watching this plan.'
+    );
+  } catch (err) {
+    $('watch').checked = !enabled; // put the box back where it was
+    setStatus(`Could not change watching: ${err.message}`, true);
+  }
 }
 
 async function savePlan() {
@@ -637,7 +671,7 @@ async function savePlan() {
 
 async function loadSavedPlan(id) {
   if (!id) {
-    $('delete-plan').hidden = true;
+    showPlanControls();
     return;
   }
   try {
@@ -647,7 +681,7 @@ async function loadSavedPlan(id) {
       return;
     }
     writePlan(body.plan.plan);
-    $('delete-plan').hidden = false;
+    showPlanControls();
     setStatus(`Loaded "${body.plan.label}". Build it to cost it against today's curve.`);
   } catch (err) {
     setStatus(`Could not load that plan: ${err.message}`, true);
@@ -663,9 +697,13 @@ async function deleteSavedPlan() {
   await fetch(`api/plans/${encodeURIComponent(id)}`, { method: 'DELETE' });
   await refreshSavedPlans();
   select.value = '';
-  $('delete-plan').hidden = true;
+  showPlanControls();
   setStatus('Plan deleted.');
 }
+
+// The saved plans as last listed, so the watch box and the delete button can
+// reflect the selected one without a round trip each time.
+let savedPlans = [];
 
 // The holdings from the most recent build, so "Add the gilts in this ladder"
 // can seed the price table with exactly the shortlist that matters.
@@ -680,6 +718,7 @@ async function init() {
   $('save').addEventListener('click', savePlan);
   $('delete-plan').addEventListener('click', deleteSavedPlan);
   $('saved-plans').addEventListener('change', (event) => loadSavedPlan(event.target.value));
+  $('watch').addEventListener('change', (event) => setWatch(event.target.checked));
   $('price-ladder').addEventListener('click', () => {
     for (const holding of lastHoldings) addPriceRow(holding.isin, holding.cleanPrice.toFixed(3));
     $('prices-panel').open = true;

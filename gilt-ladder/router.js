@@ -11,6 +11,7 @@ const { toISO, addBusinessDays } = require('./lib/calendar');
 const { expandedLength, validateRepeat } = require('./lib/liabilities');
 const { sealPlan, openPlan, normalizePlan } = require('./lib/planToken');
 const planStore = require('./lib/planStore');
+const { runRecosting, DEFAULT_THRESHOLD_PERCENT, DEFAULT_HOUR_UTC } = require('./lib/recost');
 
 const MOUNT = '/gilt-ladder';
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -337,6 +338,22 @@ async function handlePlans(req, res, subPath, url) {
     return;
   }
 
+  // Watching is toggled on its own route rather than through save(), so
+  // ticking a box in a list cannot overwrite the plan with whatever the form
+  // happened to hold.
+  if (id && req.method === 'PATCH') {
+    let body;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch (err) {
+      sendJson(res, 400, { error: 'invalid JSON body', details: err.message });
+      return;
+    }
+    const record = await planStore.setAlerts(id, body.alertsEnabled);
+    sendJson(res, record ? 200 : 404, record ? { plan: record } : { error: 'no such plan' });
+    return;
+  }
+
   if (id && req.method === 'DELETE') {
     const removed = await planStore.remove(id);
     sendJson(res, removed ? 200 : 404, removed ? { ok: true } : { error: 'no such plan' });
@@ -417,6 +434,42 @@ async function handle(req, res, url) {
   }
 }
 
+// Costs a stored plan against the current curve. Only the total is wanted, but
+// it comes from the same buildLadder every interactive request uses - a
+// separate "quick" costing would be a second implementation to keep in step.
+async function costPlan(plan) {
+  const curveEntry = await getCurve();
+  const settlement = toISO(addBusinessDays(curveEntry.curve.date, DEFAULTS.settlementBusinessDays));
+  const result = buildLadder({
+    ...plan,
+    settlement,
+    curve: curveEntry.curve,
+    universe: activeAt(universe, settlement),
+  });
+  return {
+    cost: result.totals.cost,
+    fullyFunded: result.fullyFunded,
+    curveDate: result.curveDate,
+  };
+}
+
+// Re-costing runs on the host's interval, and the host supplies the transport:
+// the Gilt Ladder requires no RNS code, so it states the policy and is handed
+// the means to act on it. `send` is whatever the composition root wires in.
+function checkRecosting({ send, thresholdPercent, hourUtc } = {}) {
+  if (universeError || !planStore.enabled) return Promise.resolve(null);
+  return runRecosting({
+    store: planStore,
+    costPlan,
+    send,
+    thresholdPercent: thresholdPercent == null ? DEFAULT_THRESHOLD_PERCENT : thresholdPercent,
+    hourUtc: hourUtc == null ? DEFAULT_HOUR_UTC : hourUtc,
+  }).catch((err) => {
+    console.warn(`Gilt Ladder re-costing failed: ${err.message}`);
+    return null;
+  });
+}
+
 // Called once the host server is listening: warns about sample data and warms
 // the curve so the first real request is not the one that waits for the Bank.
 function start() {
@@ -427,4 +480,4 @@ function start() {
   getCurve().catch((err) => console.warn(`Gilt Ladder initial curve fetch failed: ${err.message}`));
 }
 
-module.exports = { MOUNT, owns, handle, start, validateRequest, universeStaleness };
+module.exports = { MOUNT, owns, handle, start, checkRecosting, costPlan, validateRequest, universeStaleness };
