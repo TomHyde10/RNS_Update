@@ -301,7 +301,7 @@ function renderChart(result) {
     </svg>`;
 }
 
-function renderProvenance(p, pricing) {
+function renderProvenance(p, pricing, tax) {
   const bits = [
     `Prices ${p.priceBasis}, dated ${shortDate(p.curveDate)}.`,
     pricing && pricing.pricedRungs
@@ -309,6 +309,15 @@ function renderProvenance(p, pricing) {
       : '',
     p.curveStale ? 'The curve could not be refreshed — this is the last one retrieved.' : '',
     `Gilt universe: ${p.universeSource}${p.universeAsOf ? ` as at ${shortDate(p.universeAsOf)}` : ''}.`,
+    tax && tax.marginalRate > 0
+      ? tax.accruedIncomeScheme
+        ? 'Coupons taxed at your marginal rate, with Accrued Income Scheme relief on each first coupon.'
+        : `Coupons taxed at your marginal rate in full; the Accrued Income Scheme was not applied (${
+            tax.totalNominal <= tax.nominalThreshold
+              ? `£${tax.totalNominal.toLocaleString('en-GB')} nominal is within the £${tax.nominalThreshold.toLocaleString('en-GB')} threshold`
+              : 'you turned it off'
+          }).`
+      : 'No tax on coupons at a 0% marginal rate.',
     'Indicative only: these are not dealable prices and exclude dealing costs and commission.',
   ];
   $('provenance').textContent = bits.filter(Boolean).join(' ');
@@ -338,6 +347,9 @@ async function build() {
         lotSize: Number($('lot-size').value),
         bufferBusinessDays: Number($('buffer').value),
         observedPrices: readObservedPrices(),
+        // 'auto' rather than true: the scheme only catches holdings over
+        // £5,000 nominal, and the server decides that from the ladder it builds.
+        accruedIncomeScheme: $('ais').checked ? 'auto' : false,
       }),
     });
 
@@ -353,7 +365,7 @@ async function build() {
     renderCoverage(body.coverage);
     renderSelection(body.diagnostics.selection);
     renderChart(body);
-    renderProvenance(body.provenance, body.pricing);
+    renderProvenance(body.provenance, body.pricing, body.tax);
     // The gilts this ladder picked are the shortlist worth going and getting
     // real prices for, so make pre-filling them one click.
     lastHoldings = body.holdings;

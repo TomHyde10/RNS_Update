@@ -33,6 +33,12 @@ high-coupon gilt at a premium with the same gross yield, and the size of that
 effect depends on your marginal rate. Set the rate to 0% for an ISA or SIPP and
 the selection changes accordingly — visibly so, which is the point.
 
+The Accrued Income Scheme is modelled too, which narrows that penalty without
+reversing it: relief is proportional to the accrued interest you pay, accrued is
+proportional to the coupon, so a high-coupon gilt gets more of its first
+coupon's tax back. Ignoring it — as any model that simply taxes every coupon in
+full does — overstates the case against high coupons on every rung.
+
 ## The honest caveats
 
 **Prices are derived, not observed.** They come from discounting each gilt's
@@ -136,6 +142,19 @@ believing a rung was priced from the market when it was not.
   lets end-of-month clamping compound and drift a day permanently after the
   first short month.
 - **Accrued interest** is ACT/ACT (ICMA).
+- **The Accrued Income Scheme** adjusts the tax on the first coupon after
+  purchase, because a ladder buys mid-period on every rung. Buying
+  cum-dividend you pay the seller for interest that accrued before you owned
+  the gilt and then receive the whole coupon, so that payment is relieved and
+  you are taxed only on what accrued while it was yours. Buying ex-dividend the
+  seller keeps the coupon and rebates you the unexpired part, and the scheme
+  runs the other way: the rebate is a charge. Both are `taxable = coupon −
+  accrued`, with no case analysis, because accrued is already negative inside
+  the ex-dividend window. Relief is capped at the coupon it attaches to rather
+  than spilling onto other income this application cannot see. It applies over
+  £5,000 nominal; `'auto'` builds once and rebuilds if the ladder came out
+  below that, since the choice of gilts and the tax treatment each depend on
+  the other.
 - **Ex-dividend** is 7 business days before a coupon date. A buyer settling
   inside that window does not receive the coupon and accrued interest goes
   **negative**. This is the easiest thing in the model to get wrong — it
@@ -224,7 +243,7 @@ records the runner-up for each rung so the gap is visible.
 
 | Route | Purpose |
 |---|---|
-| `POST /gilt-ladder/api/ladder` | Build a ladder. Body: `liabilities[]`, `portfolioValue`, `marginalRate`, `lotSize`, `bufferBusinessDays`, `observedPrices[]` |
+| `POST /gilt-ladder/api/ladder` | Build a ladder. Body: `liabilities[]`, `portfolioValue`, `marginalRate`, `lotSize`, `bufferBusinessDays`, `observedPrices[]`, `accruedIncomeScheme` |
 | `GET /gilt-ladder/api/universe` | The gilt universe and whether it is real or sample |
 | `GET /gilt-ladder/api/curve` | The cached curve, its date, and whether it is stale |
 | `GET /gilt-ladder/api/health` | Liveness; 503 if the universe failed validation |

@@ -1,6 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { buildLadder, netCostPerUnit } = require('../lib/ladder');
+const {
+  buildLadder,
+  netCostPerUnit,
+  holdingFlows,
+  afterTaxAmountAt,
+  AIS_NOMINAL_THRESHOLD,
+} = require('../lib/ladder');
 const { discountTo } = require('../lib/curve');
 const { yearsBetween } = require('../lib/bondMath');
 
@@ -358,4 +364,105 @@ test('a redemption past the end of the curve is warned about', () => {
   const warning = result.warnings.find((w) => w.type === 'extrapolated-price');
   assert.ok(warning, 'expected an extrapolated-price warning');
   assert.match(warning.message, /beyond the published end of the curve/);
+});
+
+// --- Accrued Income Scheme -------------------------------------------------
+//
+// Taxing every coupon in full is wrong for the first one a buyer receives, and
+// a ladder buys mid-period on every rung, so it was wrong on every rung. The
+// direction matters as much as the size: relief is proportional to accrued,
+// accrued is proportional to the coupon, so the scheme gives back more on a
+// high-coupon gilt than on a low-coupon one - it narrows the tax penalty the
+// whole application exists to show, without reversing it.
+
+const exDivSettlement = '2027-03-26'; // inside the xd window for a 31 March coupon
+
+test('the scheme relieves the accrued interest paid on a cum-dividend purchase', () => {
+  const without = netCostPerUnit(universe[1], '2026-09-15', curve, 0.45, { accruedIncomeScheme: false });
+  const with_ = netCostPerUnit(universe[1], '2026-09-15', curve, 0.45, { accruedIncomeScheme: true });
+
+  assert.ok(with_.aisRelief > 0, 'a cum-dividend buyer pays accrued, so relief is positive');
+  assert.ok(with_.perUnit < without.perUnit, 'relief must make the gilt cheaper per £1 delivered');
+});
+
+// Inside the ex-dividend window the seller keeps the coupon and rebates the
+// unexpired part, so accrued is negative and the scheme runs the other way.
+// This is the case that would need special-casing if the sign convention in
+// lib/accrued.js were not already right.
+test('the scheme charges the rebate received on an ex-dividend purchase', () => {
+  const gilt = universe[3]; // 4% Test 2032
+  const without = netCostPerUnit(gilt, exDivSettlement, curve, 0.45, { accruedIncomeScheme: false });
+  const with_ = netCostPerUnit(gilt, exDivSettlement, curve, 0.45, { accruedIncomeScheme: true });
+
+  assert.ok(with_.aisRelief < 0, 'an ex-dividend buyer receives a rebate, so it is a charge');
+  assert.ok(with_.perUnit > without.perUnit, 'a charge must make the gilt dearer per £1 delivered');
+});
+
+test('the scheme narrows the tax penalty on a high-coupon gilt', () => {
+  const gap = (ais) => {
+    const low = netCostPerUnit(universe[0], '2026-09-15', curve, 0.45, { accruedIncomeScheme: ais });
+    const high = netCostPerUnit(universe[1], '2026-09-15', curve, 0.45, { accruedIncomeScheme: ais });
+    return high.perUnit - low.perUnit;
+  };
+
+  assert.ok(gap(true) < gap(false), 'relief is larger on the larger coupon, so the gap must narrow');
+  assert.ok(gap(true) > 0, 'but it must not reverse: the low-coupon gilt still wins for a taxpayer');
+});
+
+test('an ISA or SIPP is untouched by the scheme', () => {
+  const result = buildLadder({ ...base, marginalRate: 0, liabilities: [{ date: '2028-09-30', amount: 50000 }] });
+  assert.equal(result.tax.accruedIncomeScheme, false, 'no tax means nothing to relieve');
+  assert.equal(result.holdings[0].aisRelief, 0);
+});
+
+// The scheme catches holdings over £5,000 nominal. Which gilts get bought
+// depends on the tax treatment and the treatment depends on how much gets
+// bought, so 'auto' builds once and rebuilds if the answer came out too small.
+test('auto applies the scheme only above the nominal threshold', () => {
+  const big = buildLadder({ ...base, marginalRate: 0.45, liabilities: [{ date: '2028-09-30', amount: 50000 }] });
+  assert.ok(big.tax.totalNominal > AIS_NOMINAL_THRESHOLD);
+  assert.equal(big.tax.accruedIncomeScheme, true);
+
+  const small = buildLadder({ ...base, marginalRate: 0.45, liabilities: [{ date: '2028-09-30', amount: 1000 }] });
+  assert.ok(small.tax.totalNominal <= AIS_NOMINAL_THRESHOLD);
+  assert.equal(small.tax.accruedIncomeScheme, false);
+  assert.equal(small.holdings[0].aisRelief, 0, 'the rebuild must clear the relief, not just the flag');
+});
+
+test('the scheme can be forced off above the threshold', () => {
+  const forced = buildLadder({
+    ...base,
+    marginalRate: 0.45,
+    accruedIncomeScheme: false,
+    liabilities: [{ date: '2028-09-30', amount: 50000 }],
+  });
+  assert.equal(forced.tax.accruedIncomeScheme, false);
+});
+
+// Relief attaches to the first coupon received and to no other, and it cannot
+// take a coupon's taxable amount below zero.
+test('relief applies once, to the first flow only', () => {
+  const flow = { coupon: 3, principal: 0 };
+  assert.equal(afterTaxAmountAt(flow, 0, 0.45, 1), 3 - (3 - 1) * 0.45);
+  assert.equal(afterTaxAmountAt(flow, 1, 0.45, 1), 3 - 3 * 0.45, 'later coupons get no relief');
+  assert.equal(afterTaxAmountAt(flow, 0, 0.45, 99), 3, 'relief is capped at the coupon, never negative tax');
+});
+
+// A ladder built under the scheme must have its reported cash flows built the
+// same way, or the coverage table would be checked against flows that differ
+// from the ones selection was made on.
+test('the reported cash flows carry the same relief selection used', () => {
+  const result = buildLadder({
+    ...base,
+    marginalRate: 0.45,
+    liabilities: [{ date: '2028-09-30', amount: 50000 }],
+  });
+
+  const holding = result.holdings[0];
+  const gilt = { name: holding.name, coupon: holding.coupon, redemption: holding.redemption };
+  const expected = holdingFlows(gilt, holding.nominal, result.settlement, 0.45, holding.aisRelief);
+  const reported = result.cashflows;
+
+  assert.equal(reported.length, expected.length);
+  assert.ok(Math.abs(reported[0].amount - expected[0].amount) < 1e-9, 'first flow must carry the relief');
 });

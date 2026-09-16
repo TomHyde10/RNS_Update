@@ -131,6 +131,22 @@ describe('observed price validation', () => {
   });
 });
 
+describe('Accrued Income Scheme validation', () => {
+  const ok = { liabilities: [{ date: '2030-06-30', amount: 1000 }] };
+
+  it('accepts auto, true and false', () => {
+    for (const accruedIncomeScheme of ['auto', true, false]) {
+      assert.deepEqual(giltLadder.validateRequest({ ...ok, accruedIncomeScheme }), []);
+    }
+  });
+
+  it('rejects anything else', () => {
+    const problems = giltLadder.validateRequest({ ...ok, accruedIncomeScheme: 'yes' });
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /must be 'auto', true or false/);
+  });
+});
+
 // The universe is a committed file refreshed by hand, so the only way it fails
 // is by going quietly out of date - and a stale file looks exactly like a
 // fresh one from the outside.

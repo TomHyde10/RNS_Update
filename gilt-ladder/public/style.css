@@ -304,6 +304,20 @@ th {
   margin-bottom: 0.4rem;
 }
 
+/* A checkbox in a column of text and number inputs needs the control beside
+   its label, not above it like the rest of the row. */
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+.check-row input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+}
+
 .hint.block {
   display: block;
   max-width: 62ch;

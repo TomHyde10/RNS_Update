@@ -32,7 +32,7 @@ the tax logic the app's headline claim rests on (2), before adding scope.
       clean price and accrued you actually deal on. `diagnostics.selection`
       records the runner-up per rung and the UI never renders it. The
       universe's `asOf` is shown as grey text with no staleness warning.
-- [ ] **2. Accrued Income Scheme.** Every coupon is taxed in full, which is
+- [x] **2. Accrued Income Scheme.** Every coupon is taxed in full, which is
       wrong for the first coupon of every rung: a cum-div buyer gets relief
       for accrued interest paid, an ex-div buyer takes a charge for the
       rebate. `taxable = coupon - accruedInterest(gilt, settlement)`, and the

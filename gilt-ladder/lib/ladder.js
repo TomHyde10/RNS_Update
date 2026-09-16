@@ -43,6 +43,10 @@ const DEFAULTS = {
   marginalRate: 0,
   // T+1 is the gilt settlement convention.
   settlementBusinessDays: 1,
+  // Accrued Income Scheme: 'auto', true or false. 'auto' applies it whenever
+  // there is tax to relieve and the ladder is large enough to be within the
+  // scheme - see AIS_NOMINAL_THRESHOLD.
+  accruedIncomeScheme: 'auto',
 };
 
 // Proceeds sitting in cash longer than this before the liability they fund
@@ -51,12 +55,43 @@ const IDLE_WARNING_DAYS = 365;
 
 const afterTaxAmount = (flow, marginalRate) => flow.principal + flow.coupon * (1 - marginalRate);
 
+// Accrued Income Scheme. Taxing every coupon in full is wrong for the first
+// one a buyer receives, and a ladder buys mid-period on every rung by
+// construction, so it was wrong on every rung.
+//
+// Buying CUM-DIVIDEND you pay the seller for the interest that accrued before
+// you owned the gilt, then receive the whole coupon; AIS gives you relief for
+// what you paid, so you are taxed only on interest that accrued while it was
+// yours. Buying EX-DIVIDEND the seller keeps the coupon and rebates you the
+// unexpired part, and the scheme runs the other way: that rebate is a charge.
+//
+// Both are the same arithmetic - taxable = coupon - accrued - because accrued
+// is already negative inside the ex-dividend window, so no case analysis is
+// needed here. `lib/accrued.js` earns that.
+//
+// Relief is capped at the coupon it attaches to. In law it is relief against
+// interest income generally, so a very large accrued payment could reduce tax
+// on other income; modelling that would mean knowing about holdings this
+// application cannot see, and stopping at zero is the conservative direction.
+const AIS_NOMINAL_THRESHOLD = 5000;
+
+function taxableCoupon(flow, index, aisRelief) {
+  if (index !== 0 || !aisRelief) return flow.coupon;
+  return Math.max(0, flow.coupon - aisRelief);
+}
+
+// After-tax value of a flow, given its position in the holding's own schedule -
+// only the first flow carries AIS relief. `aisRelief` is per £100 nominal, the
+// same unit as the flow.
+const afterTaxAmountAt = (flow, index, marginalRate, aisRelief) =>
+  flow.principal + flow.coupon - taxableCoupon(flow, index, aisRelief) * marginalRate;
+
 // The flows a given nominal holding delivers, after tax, keyed by payment date.
-function holdingFlows(gilt, nominal, settlement, marginalRate) {
-  return cashflows(gilt, settlement).map((flow) => ({
+function holdingFlows(gilt, nominal, settlement, marginalRate, aisRelief = 0) {
+  return cashflows(gilt, settlement).map((flow, index) => ({
     date: flow.paidOn,
     couponDate: flow.couponDate,
-    amount: (nominal / 100) * afterTaxAmount(flow, marginalRate),
+    amount: (nominal / 100) * afterTaxAmountAt(flow, index, marginalRate, aisRelief),
     gross: (nominal / 100) * flow.amount,
     isRedemption: flow.principal > 0,
   }));
@@ -75,13 +110,18 @@ function holdingFlows(gilt, nominal, settlement, marginalRate) {
 // says nothing about what its individual future coupons are worth. Mixing the
 // two is the honest construction - the leg you can observe is observed, the leg
 // you cannot is still modelled - and `source` records which.
-function netCostPerUnit(gilt, settlement, curve, marginalRate, observedClean = null) {
+function netCostPerUnit(gilt, settlement, curve, marginalRate, { observedClean = null, accruedIncomeScheme = false } = {}) {
   const priced = priceFromCurve(gilt, settlement, curve);
   const flows = priced.flows;
   if (!flows.length) return null;
 
-  const redemption = flows[flows.length - 1];
-  const delivered = afterTaxAmount(redemption, marginalRate);
+  // Relief is set by the accrued the buyer pays, which is a property of the
+  // gilt and the settlement date - not of the price, quoted or derived.
+  const aisRelief = accruedIncomeScheme ? priced.accrued : 0;
+
+  const last = flows.length - 1;
+  const redemption = flows[last];
+  const delivered = afterTaxAmountAt(redemption, last, marginalRate, aisRelief);
   if (delivered <= 0) return null;
 
   // Accrued is the buyer's either way, so an observed CLEAN price becomes the
@@ -90,12 +130,15 @@ function netCostPerUnit(gilt, settlement, curve, marginalRate, observedClean = n
   const dirty = observedClean == null ? priced.dirty : observedClean + priced.accrued;
 
   let pvIntermediate = 0;
-  for (const flow of flows.slice(0, -1)) {
-    pvIntermediate += afterTaxAmount(flow, marginalRate) * discountTo(curve, yearsBetween(settlement, flow.paidOn));
+  for (let i = 0; i < last; i++) {
+    pvIntermediate +=
+      afterTaxAmountAt(flows[i], i, marginalRate, aisRelief) *
+      discountTo(curve, yearsBetween(settlement, flows[i].paidOn));
   }
 
   return {
     perUnit: (dirty - pvIntermediate) / delivered,
+    aisRelief,
     dirty,
     delivered,
     clean: dirty - priced.accrued,
@@ -135,6 +178,12 @@ function riskMeasures(gilt, settlement, curve, dirty) {
 function buildLadder(request) {
   const options = { ...DEFAULTS, ...request };
   const { universe, curve, portfolioValue, marginalRate, lotSize, bufferBusinessDays } = options;
+
+  // With no tax there is nothing for the scheme to relieve, so an ISA or SIPP
+  // is unaffected either way and the arithmetic is skipped rather than
+  // multiplied by zero.
+  const aisMode = options.accruedIncomeScheme;
+  const accruedIncomeScheme = marginalRate > 0 && (aisMode === 'auto' || aisMode === true);
 
   const settlement = toISO(
     options.settlement || addBusinessDays(curve.date, options.settlementBusinessDays)
@@ -186,7 +235,10 @@ function buildLadder(request) {
     const priced = universe
       .map((gilt) => ({
         gilt,
-        cost: netCostPerUnit(gilt, settlement, curve, marginalRate, observedPrices.get(gilt.isin) ?? null),
+        cost: netCostPerUnit(gilt, settlement, curve, marginalRate, {
+          observedClean: observedPrices.get(gilt.isin) ?? null,
+          accruedIncomeScheme,
+        }),
       }))
       .filter((c) => c.cost && c.gilt.redemption <= latest);
 
@@ -209,7 +261,7 @@ function buildLadder(request) {
     const exactNominal = (residual[i] / chosen.cost.delivered) * 100;
     const nominal = Math.ceil(exactNominal / lotSize) * lotSize;
 
-    const flows = holdingFlows(chosen.gilt, nominal, settlement, marginalRate);
+    const flows = holdingFlows(chosen.gilt, nominal, settlement, marginalRate, chosen.cost.aisRelief);
     const cost = (nominal / 100) * chosen.cost.dirty;
 
     holdings.push({
@@ -228,6 +280,10 @@ function buildLadder(request) {
       priceSource: chosen.cost.source,
       extrapolated: chosen.cost.extrapolated,
       beyondCurve: chosen.cost.beyondCurve,
+      // Per £100 nominal, positive cum-dividend and negative ex-dividend. Kept
+      // on the holding so summarise() rebuilds exactly the flows that were
+      // chosen against, and so the relief is auditable rather than implicit.
+      aisRelief: chosen.cost.aisRelief,
       cost,
       ...riskMeasures(chosen.gilt, settlement, curve, chosen.cost.dirty),
       fundsLiability: liabilities[i].date,
@@ -254,6 +310,18 @@ function buildLadder(request) {
     }
   }
 
+  // The scheme only catches an individual holding over £5,000 nominal of
+  // these securities. Which gilts get bought depends on the tax treatment, and
+  // the tax treatment depends on how much gets bought, so 'auto' resolves it
+  // by building once and rebuilding if the answer came out too small to
+  // qualify. It terminates: the second pass is pinned to an explicit false.
+  if (aisMode === 'auto' && accruedIncomeScheme) {
+    const totalNominal = holdings.reduce((sum, h) => sum + h.nominal, 0);
+    if (totalNominal <= AIS_NOMINAL_THRESHOLD) {
+      return buildLadder({ ...request, settlement, accruedIncomeScheme: false });
+    }
+  }
+
   return summarise({
     liabilities,
     holdings,
@@ -262,11 +330,22 @@ function buildLadder(request) {
     residual,
     settlement,
     options,
+    accruedIncomeScheme,
     pricing: { observed: observedPrices.size, ignored: ignoredPrices },
   });
 }
 
-function summarise({ liabilities, holdings, selection, unfunded, residual, settlement, options, pricing }) {
+function summarise({
+  liabilities,
+  holdings,
+  selection,
+  unfunded,
+  residual,
+  settlement,
+  options,
+  accruedIncomeScheme,
+  pricing,
+}) {
   const { curve, portfolioValue, marginalRate } = options;
   const totalCost = holdings.reduce((sum, h) => sum + h.cost, 0);
 
@@ -276,7 +355,7 @@ function summarise({ liabilities, holdings, selection, unfunded, residual, settl
   const calendar = new Map();
   for (const holding of holdings) {
     const gilt = { name: holding.name, coupon: holding.coupon, redemption: holding.redemption };
-    for (const flow of holdingFlows(gilt, holding.nominal, settlement, marginalRate)) {
+    for (const flow of holdingFlows(gilt, holding.nominal, settlement, marginalRate, holding.aisRelief)) {
       const entry = calendar.get(flow.date) || { date: flow.date, amount: 0, gross: 0 };
       entry.amount += flow.amount;
       entry.gross += flow.gross;
@@ -354,6 +433,14 @@ function summarise({ liabilities, holdings, selection, unfunded, residual, settl
     settlement,
     curveDate: curve.date,
     marginalRate,
+    // What tax treatment this answer was actually built under. The scheme
+    // changes which gilts get chosen, so it cannot be left implicit.
+    tax: {
+      marginalRate,
+      accruedIncomeScheme,
+      nominalThreshold: AIS_NOMINAL_THRESHOLD,
+      totalNominal: holdings.reduce((sum, h) => sum + h.nominal, 0),
+    },
     holdings: holdings.sort((a, b) => a.redemption.localeCompare(b.redemption)),
     coverage,
     cashflows: flows,
@@ -394,4 +481,12 @@ function summarise({ liabilities, holdings, selection, unfunded, residual, settl
   };
 }
 
-module.exports = { buildLadder, DEFAULTS, netCostPerUnit, holdingFlows, afterTaxAmount };
+module.exports = {
+  buildLadder,
+  DEFAULTS,
+  netCostPerUnit,
+  holdingFlows,
+  afterTaxAmount,
+  afterTaxAmountAt,
+  AIS_NOMINAL_THRESHOLD,
+};

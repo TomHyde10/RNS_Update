@@ -128,6 +128,10 @@ function validateRequest(body) {
     problems.push('lotSize must be positive');
   }
 
+  if (body.accruedIncomeScheme != null && !['auto', true, false].includes(body.accruedIncomeScheme)) {
+    problems.push("accruedIncomeScheme must be 'auto', true or false");
+  }
+
   if (body.observedPrices != null) {
     if (!Array.isArray(body.observedPrices)) {
       problems.push('observedPrices must be an array');
@@ -190,6 +194,8 @@ async function handleLadder(req, res) {
       bufferBusinessDays:
         body.bufferBusinessDays == null ? DEFAULTS.bufferBusinessDays : Number(body.bufferBusinessDays),
       observedPrices: body.observedPrices || [],
+      accruedIncomeScheme:
+        body.accruedIncomeScheme == null ? DEFAULTS.accruedIncomeScheme : body.accruedIncomeScheme,
       settlement,
       curve: curveEntry.curve,
       universe: activeAt(universe, settlement),
