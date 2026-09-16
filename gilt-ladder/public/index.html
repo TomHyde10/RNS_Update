@@ -259,6 +259,20 @@
           </div>
         </div>
 
+        <div class="panel">
+          <h2>Take it away</h2>
+          <div class="actions">
+            <button id="export-dealing" type="button" class="secondary">Dealing list (CSV)</button>
+            <button id="export-cashflows" type="button" class="secondary">Cash flows (CSV)</button>
+            <button id="export-calendar" type="button" class="secondary">Calendar (.ics)</button>
+          </div>
+          <p class="hint block">
+            Each export is rebuilt from the plan against the current curve, so a file never
+            disagrees with the ladder it claims to be an export of. The calendar can also be
+            subscribed to from a share link.
+          </p>
+        </div>
+
         <p id="provenance" class="provenance"></p>
       </section>
     </main>

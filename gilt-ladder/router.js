@@ -12,6 +12,7 @@ const { expandedLength, validateRepeat } = require('./lib/liabilities');
 const { sealPlan, openPlan, normalizePlan } = require('./lib/planToken');
 const planStore = require('./lib/planStore');
 const { runRecosting, DEFAULT_THRESHOLD_PERCENT, DEFAULT_HOUR_UTC } = require('./lib/recost');
+const { dealingListCsv, cashflowsCsv, calendarIcs } = require('./lib/exports');
 
 const MOUNT = '/gilt-ladder';
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -259,6 +260,81 @@ async function handleLadder(req, res) {
   }
 }
 
+const sendFile = (res, status, contentType, filename, body) => {
+  res.writeHead(status, {
+    'Content-Type': contentType,
+    'Content-Length': Buffer.byteLength(body),
+    // `attachment` for the spreadsheets, since they are files to keep;
+    // `inline` for the calendar, which a subscribing client reads in place.
+    'Content-Disposition': `${contentType.startsWith('text/calendar') ? 'inline' : 'attachment'}; filename="${filename}"`,
+    'Cache-Control': 'no-store',
+  });
+  res.end(body);
+};
+
+// Exports are built from a freshly-costed ladder rather than from whatever the
+// page happens to be showing, so a file can never disagree with the plan it
+// claims to be an export of.
+//
+// The calendar accepts a sealed plan token in `t` as well as a POST body: a
+// calendar application subscribes by URL and cannot post anything.
+async function handleExport(req, res, subPath, url) {
+  let plan;
+
+  if (req.method === 'GET') {
+    const opened = openPlan(url.searchParams.get('t'));
+    if (opened.error) {
+      sendJson(res, opened.status, { error: opened.error });
+      return;
+    }
+    plan = opened.plan;
+  } else if (req.method === 'POST') {
+    const parsed = await readPlanBody(req, res);
+    if (!parsed) return;
+    plan = parsed.plan;
+  } else {
+    sendJson(res, 405, { error: 'method not allowed' });
+    return;
+  }
+
+  let curveEntry;
+  try {
+    curveEntry = await getCurve();
+  } catch (err) {
+    sendJson(res, 503, { error: 'no yield curve available', details: err.message });
+    return;
+  }
+
+  const settlement = toISO(addBusinessDays(curveEntry.curve.date, DEFAULTS.settlementBusinessDays));
+  let result;
+  try {
+    result = buildLadder({
+      ...plan,
+      settlement,
+      curve: curveEntry.curve,
+      universe: activeAt(universe, settlement),
+    });
+  } catch (err) {
+    sendJson(res, 400, { error: 'could not build ladder', details: err.message });
+    return;
+  }
+
+  if (subPath === '/api/export/dealing-list.csv') {
+    sendFile(res, 200, 'text/csv; charset=utf-8', 'gilt-dealing-list.csv', dealingListCsv(result));
+    return;
+  }
+  if (subPath === '/api/export/cashflows.csv') {
+    sendFile(res, 200, 'text/csv; charset=utf-8', 'gilt-cashflows.csv', cashflowsCsv(result));
+    return;
+  }
+  if (subPath === '/api/export/calendar.ics') {
+    sendFile(res, 200, 'text/calendar; charset=utf-8', 'gilt-ladder.ics', calendarIcs(result));
+    return;
+  }
+
+  sendJson(res, 404, { error: 'not found' });
+}
+
 // A plan is only ever stored or sealed after it has passed exactly the same
 // validation a build request does. A token is authenticated, which proves this
 // server sealed it - not that what it sealed is still a plan this version is
@@ -392,6 +468,11 @@ async function handle(req, res, url) {
 
     if (req.method === 'POST' && subPath === '/api/ladder') {
       await handleLadder(req, res);
+      return;
+    }
+
+    if (subPath.startsWith('/api/export/')) {
+      await handleExport(req, res, subPath, url);
       return;
     }
 

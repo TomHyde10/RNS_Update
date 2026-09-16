@@ -6,6 +6,7 @@ const {
   holdingFlows,
   afterTaxAmountAt,
   AIS_NOMINAL_THRESHOLD,
+  DEFAULTS,
 } = require('../lib/ladder');
 const { discountTo } = require('../lib/curve');
 const { yearsBetween } = require('../lib/bondMath');
@@ -590,4 +591,35 @@ test('a repeating liability is expanded before the ladder is built', () => {
     'a series and the list it stands for must build the same ladder'
   );
   assert.ok(Math.abs(series.totals.cost - written.totals.cost) < 1e-9);
+});
+
+// A plan that has been stored, sealed into a link or posted to an export
+// arrives with absent options as explicit nulls. Object spread lets those
+// nulls win over the defaults, and a null lotSize makes every nominal NaN -
+// which reached the re-costing job and the CSV exports before it was caught.
+test('an explicit null option falls back to its default', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [{ date: '2030-06-30', amount: 50000 }],
+    lotSize: null,
+    bufferBusinessDays: null,
+    marginalRate: null,
+    accruedIncomeScheme: null,
+  });
+
+  const holding = result.holdings[0];
+  assert.ok(Number.isFinite(holding.nominal), `nominal was ${holding.nominal}`);
+  assert.equal(holding.nominal % DEFAULTS.lotSize, 0);
+  assert.ok(Number.isFinite(holding.cost));
+  assert.ok(Number.isFinite(result.totals.cost));
+  assert.equal(result.marginalRate, DEFAULTS.marginalRate);
+});
+
+test('a supplied option still beats the default', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [{ date: '2030-06-30', amount: 50000 }],
+    lotSize: 1000,
+  });
+  assert.equal(result.holdings[0].nominal % 1000, 0);
 });

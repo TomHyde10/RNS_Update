@@ -245,6 +245,30 @@ well as in, against exactly the validation a build request gets, and only
 known fields are carried: without that the request body would be an open
 channel into `buildLadder`'s options.
 
+## Exports
+
+Three artefacts you take away rather than look at:
+
+- **Dealing list (CSV)** — what goes to a broker. Clean price and accrued are
+  separate columns, because that is how a contract note reads and how a quote is
+  checked back against the screen it came from.
+- **Cash flows (CSV)** — inflows lined up against the liabilities they fund.
+- **Calendar (.ics)** — coupons, redemptions and liability dates as all-day
+  events, for any calendar app. Also served over `GET` with a share token, since
+  a subscribing calendar can only fetch a URL.
+
+Every export is **rebuilt from the plan against the current curve**, so a file
+can never disagree with the ladder it claims to be an export of. The indicative
+caveat and the curve date travel inside the CSV: a file outlives the page that
+produced it, and a column of prices with no provenance is exactly what gets
+mistaken for dealable.
+
+Two details that are easy to get wrong and are asserted rather than assumed.
+Spreadsheets treat a leading `=`, `+`, `-` or `@` as a formula, so such a field
+is prefixed to keep it text. And calendar UIDs are derived from the event, not
+random — a subscribed calendar is re-fetched forever, and random UIDs would
+duplicate every entry on every refresh instead of updating it.
+
 ## Watching a plan
 
 The cost of funding a plan moves every day the curve moves, and nobody reopens
@@ -361,6 +385,9 @@ records the runner-up for each rung so the gap is visible.
 | `GET /gilt-ladder/api/plan?t=` | Open a shared plan token |
 | `GET/POST /gilt-ladder/api/plans` | List or save plans; 501 without `DATABASE_URL` |
 | `GET/PATCH/DELETE /gilt-ladder/api/plans/:id` | Read, watch/unwatch, or delete one saved plan |
+| `POST /gilt-ladder/api/export/dealing-list.csv` | The dealing list for a plan |
+| `POST /gilt-ladder/api/export/cashflows.csv` | The cash flow calendar for a plan |
+| `POST\|GET /gilt-ladder/api/export/calendar.ics` | Coupons and liabilities as a calendar; `GET` takes a share token in `t` |
 
 Every ladder response carries a `provenance` block — price basis, curve date,
 staleness, universe source — so a number that looks like a price can never
@@ -410,6 +437,7 @@ lib/liabilities.js         Liability series expansion
 lib/planToken.js           Encrypted shareable plan links
 lib/planStore.js           Optional Postgres storage for saved plans
 lib/recost.js              Daily re-costing policy and alert wording
+lib/exports.js             CSV dealing list / cash flows, and the .ics feed
 lib/zip.js                 Minimal zip reader (so no unzip binary is needed)
 lib/xlsx.js                Minimal xlsx reader for the DMO export
 scripts/build-universe.js  DMO export -> config/gilts.js

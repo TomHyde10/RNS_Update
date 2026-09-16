@@ -49,7 +49,7 @@ the tax logic the app's headline claim rests on (2), before adding scope.
 - [x] **7. Re-cost alerts.** Re-price saved plans against each new daily curve
       and report the drift, reusing the existing digest scheduler, Resend and
       web-push. Needs no new data: the curve is already fetched daily.
-- [ ] **8. Exports.** CSV dealing list (the artefact you take to a broker),
+- [x] **8. Exports.** CSV dealing list (the artefact you take to a broker),
       CSV cash flow calendar, and an iCal feed of coupon and liability dates
       built on `lib/buildIcs.js`.
 - [ ] **3. Tax years, PSA and the starting rate band.** A flat marginal rate

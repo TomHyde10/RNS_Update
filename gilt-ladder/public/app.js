@@ -494,6 +494,42 @@ async function build() {
   }
 }
 
+// Exports are POSTed rather than linked, because the plan has to travel with
+// the request and a plan does not belong in a URL that a browser will remember.
+// The response is a file, so it goes through a blob and a synthetic click.
+async function download(path, filename) {
+  const plan = readPlan();
+  if (!plan.liabilities.length) {
+    setStatus('Build a ladder before exporting it.', true);
+    return;
+  }
+
+  try {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(plan),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setStatus(body.error || `Export failed: HTTP ${res.status}`, true);
+      return;
+    }
+
+    const url = URL.createObjectURL(await res.blob());
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setStatus(`Exported ${filename}.`);
+  } catch (err) {
+    setStatus(`Could not export: ${err.message}`, true);
+  }
+}
+
 // --- Plans -----------------------------------------------------------------
 //
 // A plan is what was entered, not what came back: reopening one rebuilds it
@@ -719,6 +755,15 @@ async function init() {
   $('delete-plan').addEventListener('click', deleteSavedPlan);
   $('saved-plans').addEventListener('change', (event) => loadSavedPlan(event.target.value));
   $('watch').addEventListener('change', (event) => setWatch(event.target.checked));
+  $('export-dealing').addEventListener('click', () =>
+    download('api/export/dealing-list.csv', 'gilt-dealing-list.csv')
+  );
+  $('export-cashflows').addEventListener('click', () =>
+    download('api/export/cashflows.csv', 'gilt-cashflows.csv')
+  );
+  $('export-calendar').addEventListener('click', () =>
+    download('api/export/calendar.ics', 'gilt-ladder.ics')
+  );
   $('price-ladder').addEventListener('click', () => {
     for (const holding of lastHoldings) addPriceRow(holding.isin, holding.cleanPrice.toFixed(3));
     $('prices-panel').open = true;

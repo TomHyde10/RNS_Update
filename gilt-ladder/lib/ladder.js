@@ -176,8 +176,24 @@ function riskMeasures(gilt, settlement, curve, dirty) {
   };
 }
 
+// A null for an option that has a default means "not supplied", not "null".
+// Plain object spread does not agree: { ...DEFAULTS, ...request } lets an
+// explicit null win, and a null lotSize turns every nominal into NaN. Callers
+// that build a request by hand avoid this by coercing each field; callers that
+// pass a stored or deserialised plan - a saved plan, a share link, an export -
+// cannot, because absent fields come back as null. Fixed here rather than at
+// each call site, since the call sites are where it was missed.
+function withDefaults(request) {
+  const options = { ...DEFAULTS };
+  for (const [key, value] of Object.entries(request)) {
+    if (value == null && key in DEFAULTS) continue;
+    options[key] = value;
+  }
+  return options;
+}
+
 function buildLadder(request) {
-  const options = { ...DEFAULTS, ...request };
+  const options = withDefaults(request);
   const { universe, curve, portfolioValue, marginalRate, lotSize, bufferBusinessDays } = options;
 
   // With no tax there is nothing for the scheme to relieve, so an ISA or SIPP
