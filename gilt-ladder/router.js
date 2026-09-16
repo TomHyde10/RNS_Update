@@ -20,6 +20,25 @@ const MAX_OBSERVED_PRICES = 200;
 // price entered in pence, and a nominal amount pasted into the price column.
 const MIN_CLEAN_PRICE = 1;
 const MAX_CLEAN_PRICE = 250;
+// The DMO universe is a committed file refreshed by hand, so the one failure
+// it has is going quietly out of date: a gilt issued since the last export
+// cannot be chosen, and nothing about a stale file looks different from a
+// fresh one. A few gilts are issued or redeemed a year, so half a year without
+// a refresh is worth saying out loud.
+const UNIVERSE_STALE_DAYS = 180;
+
+function universeStaleness(asOf, now = Date.now()) {
+  if (!asOf) return null;
+  const ageDays = Math.floor((now - Date.parse(`${asOf}T00:00:00Z`)) / 86400000);
+  if (ageDays < UNIVERSE_STALE_DAYS) return null;
+  return {
+    type: 'stale-universe',
+    ageDays,
+    message:
+      `The gilt universe was last exported from the DMO ${ageDays} days ago (${asOf}). ` +
+      'Any gilt issued since then cannot be selected - re-run `npm run gilt:build-universe`.',
+  };
+}
 
 // A malformed universe is a deployment error, but it must not take the RNS
 // app down with it: record the failure and answer every gilt route with it.
@@ -176,6 +195,9 @@ async function handleLadder(req, res) {
       universe: activeAt(universe, settlement),
     });
 
+    const stale = universeStaleness(universe.asOf);
+    if (stale) result.warnings.push(stale);
+
     sendJson(res, 200, {
       ...result,
       // Provenance travels with every result: prices are curve-derived and
@@ -278,4 +300,4 @@ function start() {
   getCurve().catch((err) => console.warn(`Gilt Ladder initial curve fetch failed: ${err.message}`));
 }
 
-module.exports = { MOUNT, owns, handle, start, validateRequest };
+module.exports = { MOUNT, owns, handle, start, validateRequest, universeStaleness };

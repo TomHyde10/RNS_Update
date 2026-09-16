@@ -154,6 +154,39 @@ believing a rung was priced from the market when it was not.
   generator is checked against the published table for every year where both
   exist.
 
+## What the result reports
+
+Beyond the holdings and the coverage table:
+
+- **Gross redemption yield** per holding, solved by bisection against the price
+  actually paid — so a quoted price gives the yield that quote implies, not the
+  curve's. Semi-annually compounded, the convention gilts are quoted on, which
+  is a different convention from the continuously-compounded curve it was
+  discounted off; `test/ladder.test.js` pins the relationship down.
+- **Macaulay and modified duration** per holding, off the curve.
+- **The duration gap** between the ladder's cash flows and the liabilities',
+  both valued off the curve. Cash-flow matching should make this close to zero
+  *by construction*, so it is a check on the result rather than an input to it:
+  a wide gap means nothing in the universe matched the liability dates and the
+  ladder is more exposed to a move in rates than a matched one should be.
+- **The runner-up for every rung**, with the gap in basis points of cost per £1
+  delivered. Backward induction is not provably cost-minimal (see below), and
+  this is what makes the size of that concession visible instead of theoretical.
+
+### Warnings that are not raised
+
+`priceFromCurve` reports whether any cash flow was priced off a flat
+extrapolation, and almost every gilt comes back true: the curve starts at 0.5
+years, so all but the shortest have a coupon inside that. Discounting a coupon
+two months out at the six-month rate is a rounding error, so warning on it would
+put a warning on every ladder ever built. The warning keys off `beyondCurve`
+instead — the *redemption* falling past the curve's long end, where it is the
+rung's whole principal resting on a rate nobody published.
+
+The gilt universe also warns once its DMO export is more than 180 days old. A
+stale committed file is indistinguishable from a fresh one from the outside, and
+a gilt issued since the last export simply cannot be selected.
+
 ## The ladder algorithm
 
 Backward cash-flow matching, the classic dedicated-portfolio construction.

@@ -131,6 +131,8 @@
                   <th class="num">Nominal (&pound;)</th>
                   <th class="num">Clean</th>
                   <th class="num">Accrued</th>
+                  <th class="num">GRY</th>
+                  <th class="num">Mod. duration</th>
                   <th class="num">Cost (&pound;)</th>
                   <th>Funds</th>
                 </tr>
@@ -143,6 +145,30 @@
         <div class="panel">
           <h2>Cash flows against liabilities</h2>
           <div id="chart" class="scroll-x"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Why each rung</h2>
+          <p class="hint block">
+            Rungs are picked by after-tax cost per &pound;1 delivered. Backward cash-flow matching
+            is not provably cost-minimal, so the runner-up for each rung is shown: a small gap
+            means little was left on the table, a large one means the choice mattered.
+          </p>
+          <div class="scroll-x">
+            <table id="selection" class="data-table">
+              <thead>
+                <tr>
+                  <th>Liability</th>
+                  <th>Chosen</th>
+                  <th class="num">Cost per &pound;1</th>
+                  <th>Runner-up</th>
+                  <th class="num">Gap</th>
+                  <th class="num">Candidates</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
 
         <div class="panel">

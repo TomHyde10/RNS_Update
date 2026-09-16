@@ -25,7 +25,7 @@ the tax logic the app's headline claim rests on (2), before adding scope.
       ISIN and run selection against them, falling back to curve-derived
       prices for the rest. Provenance becomes per-holding. The only route to
       a dealable answer that needs no licensed feed.
-- [ ] **4. Surface computed-but-stranded analytics.** `yieldFromPrice`,
+- [x] **4. Surface computed-but-stranded analytics.** `yieldFromPrice`,
       `macaulayDuration`, `streamDuration` and `modifiedDuration` are
       exported and never called. `priceFromCurve` returns `extrapolated` and
       `netCostPerUnit` drops it. Holdings carry `dirtyPrice` but not the

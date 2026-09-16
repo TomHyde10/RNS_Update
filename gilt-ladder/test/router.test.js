@@ -130,3 +130,27 @@ describe('observed price validation', () => {
     assert.deepEqual(giltLadder.validateRequest(ok), []);
   });
 });
+
+// The universe is a committed file refreshed by hand, so the only way it fails
+// is by going quietly out of date - and a stale file looks exactly like a
+// fresh one from the outside.
+describe('universe staleness', () => {
+  const now = Date.parse('2026-09-16T00:00:00Z');
+
+  it('says nothing about a recent export', () => {
+    assert.equal(giltLadder.universeStaleness('2026-08-01', now), null);
+  });
+
+  it('warns once an export is half a year old', () => {
+    const warning = giltLadder.universeStaleness('2025-01-01', now);
+    assert.equal(warning.type, 'stale-universe');
+    assert.equal(warning.ageDays, 623);
+    assert.match(warning.message, /gilt:build-universe/);
+  });
+
+  // Sample data has no as-at date and already carries its own banner, so it
+  // must not also collect a staleness warning.
+  it('says nothing when there is no as-at date at all', () => {
+    assert.equal(giltLadder.universeStaleness(null, now), null);
+  });
+});

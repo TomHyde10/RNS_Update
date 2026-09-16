@@ -9,6 +9,13 @@ const gbp = (n) =>
 
 const gbpExact = (n) => n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+const pct = (n, dp = 3) => (n == null ? '—' : `${(n * 100).toFixed(dp)}%`);
+const years = (n) => (n == null ? '—' : `${n.toFixed(2)}y`);
+// Cost per £1 delivered differs between rungs in the fourth decimal, so the gap
+// to the runner-up is shown in basis points of that cost - the unit it is
+// actually decided in.
+const basisPoints = (n) => `${(n * 10000).toFixed(1)}bp`;
+
 const shortDate = (iso) =>
   new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', {
     day: '2-digit',
@@ -117,9 +124,10 @@ function setStatus(message, isError = false) {
   el.classList.toggle('error', isError);
 }
 
-function stat(label, value, tone) {
+function stat(label, value, tone, title) {
   const toneClass = tone ? ` ${tone}` : '';
-  return `<div class="stat"><span class="label">${label}</span><span class="value${toneClass}">${value}</span></div>`;
+  const hint = title ? ` title="${title}"` : '';
+  return `<div class="stat"${hint}><span class="label">${label}</span><span class="value${toneClass}">${value}</span></div>`;
 }
 
 function renderSummary(result) {
@@ -130,6 +138,21 @@ function renderSummary(result) {
     stat('Holdings', String(totals.holdingCount)),
     stat('Fully funded', fullyFunded ? 'Yes' : 'No', fullyFunded ? 'good' : 'bad'),
   ];
+
+  // Cash-flow matching should land the assets' duration close to the
+  // liabilities' by construction. A wide gap means the universe could not match
+  // the dates, and the ladder is more exposed to a move in rates than a matched
+  // one should be.
+  const { assets, liabilities: liabilitySide, durationGap } = result.analytics;
+  cards.push(
+    stat(
+      'Duration gap',
+      `${durationGap >= 0 ? '+' : ''}${durationGap.toFixed(2)}y`,
+      Math.abs(durationGap) <= 0.5 ? 'good' : '',
+      `Assets ${assets.duration.toFixed(2)}y against liabilities ${liabilitySide.duration.toFixed(2)}y. ` +
+        'Close to zero is what cash-flow matching is for.'
+    )
+  );
 
   if (totals.portfolioValue != null) {
     const surplus = totals.surplus;
@@ -167,8 +190,30 @@ function renderHoldings(holdings) {
             : ' <span class="pill derived" title="Derived from the Bank of England curve">derived</span>'
         }</td>
         <td class="num">${h.accrued.toFixed(3)}</td>
+        <td class="num">${pct(h.grossRedemptionYield)}</td>
+        <td class="num">${years(h.modifiedDuration)}${
+          h.beyondCurve ? ' <span class="pill derived" title="Redeems past the end of the curve">extrapolated</span>' : ''
+        }</td>
         <td class="num">${gbpExact(h.cost)}</td>
         <td>${shortDate(h.fundsLiability)}</td>
+      </tr>`
+    )
+    .join('');
+}
+
+function renderSelection(selection) {
+  const tbody = $('selection').querySelector('tbody');
+  // buildLadder works backwards, so `selection` arrives latest-first.
+  tbody.innerHTML = [...selection]
+    .sort((a, b) => a.liability.localeCompare(b.liability))
+    .map(
+      (s) => `<tr>
+        <td>${shortDate(s.liability)}</td>
+        <td>${s.chosen}</td>
+        <td class="num">${s.perUnit.toFixed(5)}</td>
+        <td>${s.runnerUp ? s.runnerUp.name : '—'}</td>
+        <td class="num">${s.runnerUp ? basisPoints(s.runnerUp.perUnit - s.perUnit) : '—'}</td>
+        <td class="num">${s.candidates}</td>
       </tr>`
     )
     .join('');
@@ -306,6 +351,7 @@ async function build() {
     renderSummary(body);
     renderHoldings(body.holdings);
     renderCoverage(body.coverage);
+    renderSelection(body.diagnostics.selection);
     renderChart(body);
     renderProvenance(body.provenance, body.pricing);
     // The gilts this ladder picked are the shortlist worth going and getting

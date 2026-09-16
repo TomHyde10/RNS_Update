@@ -259,3 +259,103 @@ test('rungs with no quote keep their derived price alongside quoted ones', () =>
   assert.equal(result.pricing.pricedRungs + result.pricing.derivedRungs, result.holdings.length);
   assert.ok(result.pricing.derivedRungs >= 1);
 });
+
+// --- Risk measures and provenance ------------------------------------------
+
+test('every holding reports a yield and a duration', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [
+      { date: '2028-09-30', amount: 20000 },
+      { date: '2035-09-30', amount: 40000 },
+    ],
+  });
+
+  for (const h of result.holdings) {
+    assert.ok(h.grossRedemptionYield > 0, `${h.name} has no yield`);
+    assert.ok(h.macaulayDuration > 0, `${h.name} has no duration`);
+    assert.ok(h.modifiedDuration > 0 && h.modifiedDuration < h.macaulayDuration);
+  }
+
+  // Longer gilt, longer duration - the ordering is the point, not the level.
+  const byRedemption = [...result.holdings].sort((a, b) => a.redemption.localeCompare(b.redemption));
+  assert.ok(byRedemption[0].macaulayDuration < byRedemption[1].macaulayDuration);
+});
+
+// The curve is continuously compounded and the yield is quoted semi-annually,
+// so a gilt priced off a flat 4.5% curve must solve to 2*(e^0.0225-1), not to
+// 4.5%. This is the same convention question that test/curve.test.js pins down
+// on the discounting side, checked here from the other direction.
+test('the solved yield is on the semi-annual convention gilts are quoted in', () => {
+  const result = buildLadder({ ...base, liabilities: [{ date: '2030-06-30', amount: 10000 }] });
+  const expected = 2 * (Math.exp(0.045 / 2) - 1);
+  assert.ok(
+    Math.abs(result.holdings[0].grossRedemptionYield - expected) < 5e-5,
+    `got ${result.holdings[0].grossRedemptionYield}, expected about ${expected}`
+  );
+});
+
+test('a quoted price moves the yield with it', () => {
+  const liabilities = [{ date: '2028-09-30', amount: 20000 }];
+  const derived = buildLadder({ ...base, liabilities });
+  const cheap = buildLadder({
+    ...base,
+    liabilities,
+    observedPrices: [{ isin: derived.holdings[0].isin, clean: derived.holdings[0].cleanPrice - 5 }],
+  });
+  assert.ok(
+    cheap.holdings[0].grossRedemptionYield > derived.holdings[0].grossRedemptionYield,
+    'paying less for the same cash flows must yield more'
+  );
+});
+
+// Cash-flow matching should put the assets' duration next to the liabilities'
+// by construction; this is the check on that, not an input to it.
+test('a matched ladder has a small duration gap', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [
+      { date: '2028-06-30', amount: 20000 },
+      { date: '2030-06-30', amount: 20000 },
+    ],
+  });
+  assert.ok(result.analytics.assets.pv > 0);
+  assert.ok(result.analytics.liabilities.pv > 0);
+  assert.ok(
+    Math.abs(result.analytics.durationGap) < 1,
+    `expected a close match, got ${result.analytics.durationGap}`
+  );
+});
+
+// A liability past the longest gilt is funded by cash sitting idle, so the
+// assets' money comes back far earlier than the liabilities need it.
+test('an unmatchable liability shows up as a wide duration gap', () => {
+  const result = buildLadder({ ...base, liabilities: [{ date: '2050-06-30', amount: 10000 }] });
+  assert.ok(result.analytics.durationGap < -5, `expected a wide gap, got ${result.analytics.durationGap}`);
+});
+
+// The BoE curve starts at 0.5 years, so all but the shortest gilts have a
+// coupon inside that and come back `extrapolated`. Warning on that would put a
+// warning on every ladder ever built, which is why the warning keys off the
+// redemption instead.
+test('short-end extrapolation is recorded but does not raise a warning', () => {
+  const result = buildLadder({ ...base, liabilities: [{ date: '2028-09-30', amount: 20000 }] });
+  assert.equal(result.holdings[0].extrapolated, true, 'a near coupon does fall before the curve starts');
+  assert.equal(result.holdings[0].beyondCurve, false);
+  assert.deepEqual(result.warnings.filter((w) => w.type === 'extrapolated-price'), []);
+});
+
+test('a redemption past the end of the curve is warned about', () => {
+  const result = buildLadder({
+    ...base,
+    universe: [...universe, { isin: 'TEST00000099', name: '1% Test 2075', coupon: 1, redemption: '2075-03-31' }],
+    liabilities: [{ date: '2080-06-30', amount: 10000 }],
+  });
+
+  const holding = result.holdings[0];
+  assert.equal(holding.isin, 'TEST00000099');
+  assert.equal(holding.beyondCurve, true);
+  const warning = result.warnings.find((w) => w.type === 'extrapolated-price');
+  assert.ok(warning, 'expected an extrapolated-price warning');
+  assert.match(warning.message, /beyond the published end of the curve/);
+});

@@ -17,7 +17,14 @@
 // each rung so the gap is visible.
 const { toDate, toISO, addBusinessDays, daysBetween } = require('./calendar');
 const { cashflows } = require('./giltCashflows');
-const { priceFromCurve, yearsBetween } = require('./bondMath');
+const {
+  priceFromCurve,
+  yearsBetween,
+  yieldFromPrice,
+  macaulayDuration,
+  modifiedDuration,
+  streamDuration,
+} = require('./bondMath');
 const { discountTo } = require('./curve');
 
 const DEFAULTS = {
@@ -94,6 +101,34 @@ function netCostPerUnit(gilt, settlement, curve, marginalRate, observedClean = n
     clean: dirty - priced.accrued,
     accrued: priced.accrued,
     source: observedClean == null ? 'derived' : 'observed',
+    // True when any of this gilt's cash flows was priced off a rate held flat
+    // beyond the curve's published range.
+    extrapolated: priced.extrapolated,
+    // ...which on its own is too blunt to act on. The BoE curve starts at 0.5
+    // years, so all but the very shortest gilts have a coupon inside that and
+    // come back extrapolated - and discounting a coupon two months out at the
+    // six-month rate is a rounding error. The extrapolation that matters is at
+    // the other end: a redemption past 40 years is the whole principal priced
+    // off a rate nobody published. Only that is worth a warning.
+    beyondCurve: yearsBetween(settlement, redemption.paidOn) > curve.points[curve.points.length - 1].years,
+  };
+}
+
+// Yield and duration for a holding. All three of these were written, exported
+// and never called; a ladder that cannot tell you what it yields or how long
+// its money is tied up is answering less than it knows.
+//
+// The yield is solved against the price actually PAID, so a quoted price gives
+// the yield that quote implies rather than the curve's. Duration stays on the
+// curve's own basis, matching the portfolio-level figures in summarise() so
+// the asset and liability sides are measured the same way.
+function riskMeasures(gilt, settlement, curve, dirty) {
+  const gry = yieldFromPrice(gilt, settlement, dirty);
+  const macaulay = macaulayDuration(gilt, settlement, curve);
+  return {
+    grossRedemptionYield: gry,
+    macaulayDuration: macaulay,
+    modifiedDuration: gry == null ? null : modifiedDuration(macaulay, gry),
   };
 }
 
@@ -191,7 +226,10 @@ function buildLadder(request) {
       cleanPrice: chosen.cost.clean,
       accrued: chosen.cost.accrued,
       priceSource: chosen.cost.source,
+      extrapolated: chosen.cost.extrapolated,
+      beyondCurve: chosen.cost.beyondCurve,
       cost,
+      ...riskMeasures(chosen.gilt, settlement, curve, chosen.cost.dirty),
       fundsLiability: liabilities[i].date,
       // Days the redemption proceeds sit in cash before the liability falls due.
       idleDays: daysBetween(chosen.gilt.redemption, liabilities[i].date),
@@ -271,6 +309,9 @@ function summarise({ liabilities, holdings, selection, unfunded, residual, settl
   const leftover = cash + flows.slice(flowIndex).reduce((sum, f) => sum + f.amount, 0);
   const shortfalls = coverage.filter((c) => !c.covered);
 
+  const assetSide = streamDuration(flows, settlement, curve);
+  const liabilitySide = streamDuration(liabilities, settlement, curve);
+
   // A rung whose gilt redeems long before the liability still funds it - the
   // money just sits in cash until then. With no reinvestment assumed that is
   // modelled correctly but is real drag, and it means no gilt matched the
@@ -287,6 +328,19 @@ function summarise({ liabilities, holdings, selection, unfunded, residual, settl
         `${h.name} redeems ${h.idleDays} days before the ${h.fundsLiability} liability; ` +
         'the proceeds sit in cash until then, earning nothing in this model.',
     }));
+
+  // A redemption past the end of the curve is not wrong so much as
+  // unsupported: nothing was published out there to fit to, and it is the
+  // rung's principal - not a stray coupon - resting on the extrapolation.
+  for (const holding of holdings.filter((h) => h.beyondCurve)) {
+    warnings.push({
+      type: 'extrapolated-price',
+      isin: holding.isin,
+      message:
+        `${holding.name} redeems beyond the published end of the curve, so its price rests on ` +
+        'the longest rate held flat rather than on a fitted one.',
+    });
+  }
 
   for (const isin of pricing.ignored) {
     warnings.push({
@@ -316,6 +370,16 @@ function summarise({ liabilities, holdings, selection, unfunded, residual, settl
     fullyFunded: shortfalls.length === 0 && unfunded.length === 0,
     warnings,
     unfunded: [...unfunded, ...shortfalls.filter((s) => s.shortfall > 0.005)],
+    // The check the ladder's own construction is supposed to pass: cash-flow
+    // matching should land the assets' duration close to the liabilities', so
+    // a wide gap means the universe could not match the dates and the result
+    // is more exposed to a move in rates than a matched ladder should be. Both
+    // sides are measured off the curve so they are comparable.
+    analytics: {
+      assets: { pv: assetSide.pv, duration: assetSide.duration },
+      liabilities: { pv: liabilitySide.pv, duration: liabilitySide.duration },
+      durationGap: assetSide.duration - liabilitySide.duration,
+    },
     // How much of this answer rests on prices that were observed rather than
     // derived. `pricedRungs` counts the holdings actually bought at a quoted
     // price, which is the number that decides whether the total cost means
