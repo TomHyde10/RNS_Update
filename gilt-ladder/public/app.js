@@ -251,6 +251,16 @@ function renderSummary(result) {
     ...(totals.existingCount
       ? [stat('Already owned', gbp(totals.existingValue), '', `${totals.existingCount} holding(s), valued not costed.`)]
       : []),
+    ...(totals.reinvestmentIncome > 0
+      ? [
+          stat(
+            'Assumed interest',
+            gbp(totals.reinvestmentIncome),
+            '',
+            "Earned on cash waiting to be spent, at the curve's implied forward rate. An assumption, not a rate anyone is offering."
+          ),
+        ]
+      : []),
     stat('Holdings', String(totals.holdingCount)),
     stat('Fully funded', fullyFunded ? 'Yes' : 'No', fullyFunded ? 'good' : 'bad'),
   ];
@@ -518,6 +528,7 @@ async function build() {
         observedPrices: readObservedPrices(),
         existingHoldings: readExistingHoldings(),
         otherIncome: $('other-income').value === '' ? null : Number($('other-income').value),
+        reinvestment: $('reinvestment').value,
         // 'auto' rather than true: the scheme only catches holdings over
         // £5,000 nominal, and the server decides that from the ladder it builds.
         accruedIncomeScheme: $('ais').checked ? 'auto' : false,
@@ -663,6 +674,7 @@ function readPlan() {
     lotSize: Number($('lot-size').value),
     bufferBusinessDays: Number($('buffer').value),
     otherIncome: $('other-income').value === '' ? null : Number($('other-income').value),
+    reinvestment: $('reinvestment').value,
     accruedIncomeScheme: $('ais').checked ? 'auto' : false,
   };
 }
@@ -673,6 +685,7 @@ function writePlan(plan) {
   if (plan.lotSize != null) $('lot-size').value = plan.lotSize;
   if (plan.bufferBusinessDays != null) $('buffer').value = plan.bufferBusinessDays;
   $('other-income').value = plan.otherIncome == null ? '' : plan.otherIncome;
+  $('reinvestment').value = plan.reinvestment === 'forward' ? 'forward' : 'none';
   $('ais').checked = plan.accruedIncomeScheme !== false;
 
   for (const table of ['liabilities', 'prices', 'owned']) {

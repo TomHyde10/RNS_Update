@@ -73,6 +73,7 @@ function normalizePlan(input) {
     lotSize: num(plan.lotSize),
     bufferBusinessDays: num(plan.bufferBusinessDays),
     accruedIncomeScheme: plan.accruedIncomeScheme == null ? 'auto' : plan.accruedIncomeScheme,
+    reinvestment: plan.reinvestment === 'forward' ? 'forward' : 'none',
   };
 }
 

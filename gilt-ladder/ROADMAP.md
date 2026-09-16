@@ -64,7 +64,7 @@ the tax logic the app's headline claim rests on (2), before adding scope.
 - [x] **11. Escalating liabilities in today's money.** A liability stated in
       today's money with an escalation rate, expanded to a nominal schedule
       before matching. Does not require index-linked gilts.
-- [ ] **12. Reinvestment assumption for idle cash.** Optional reinvestment of
+- [x] **12. Reinvestment assumption for idle cash.** Optional reinvestment of
       idle proceeds at the curve's own implied forward rate, labelled as an
       assumption. The zero-reinvestment default stays the default.
 

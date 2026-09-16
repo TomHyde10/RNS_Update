@@ -245,6 +245,38 @@ well as in, against exactly the validation a build request gets, and only
 known fields are carried: without that the request body would be an open
 channel into `buildLadder`'s options.
 
+## Idle cash
+
+When a rung's gilt redeems well before the liability it funds, the proceeds wait
+in cash. The default is that they earn **nothing** — conservative, and the only
+assumption-free answer.
+
+`reinvestment: 'forward'` instead grows them at the curve's **own implied
+forward rate** between the two dates: `DF(from) / DF(to)`. Nothing is invented —
+it is the rate already embedded in the curve pricing everything else, so a
+ladder priced off a curve is reinvested at that same curve's view of the future.
+It is still an assumption, and not a deposit rate anyone is offering, so it stays
+opt-in and the default does not move. The size of it is not small: a rung
+stranded eleven years early costs a third less to buy under this assumption than
+without it, which is precisely why it must be a choice you make rather than one
+made for you.
+
+The assumption reaches **selection**, not only the arithmetic. A gilt redeeming
+early is less penalised when its proceeds are assumed to grow, so rungs are
+ranked on cost per £1 the *liability* receives rather than per £1 delivered at
+redemption; `diagnostics.selection` reports both. Without that the ladder would
+go on choosing as though the money sat idle and then report interest it had not
+selected for.
+
+The interest is savings income, so it is taxed at the same banded rate the
+destination tax year bears — only the interest, not the money that arrived.
+Growth is floored at 1: an inverted curve can imply a negative forward, and a
+modelled negative deposit rate would be a worse assumption than the zero it
+replaced.
+
+`totals.reinvestmentIncome` is reported separately, so the part of the answer
+resting on an assumption is never mixed into the part that does not.
+
 ## If rates move
 
 One curve gives one number, and the curve moves every day. A cash-flow matched
@@ -471,15 +503,16 @@ records the runner-up for each rung so the gap is visible.
 - **Dealing lots** — nominal is rounded **up** to whole lots, so rounding can
   only ever over-fund a rung.
 - **Idle cash** — when a rung's gilt redeems well before the liability it funds,
-  the proceeds sit in cash earning nothing (no reinvestment is assumed, which is
-  the conservative choice). Anything over a year is flagged as a warning, since
-  the usual cause is that nothing in the universe matches the liability's date.
+  the proceeds sit in cash earning nothing by default. Anything over a year is
+  flagged as a warning, since the usual cause is that nothing in the universe
+  matches the liability's date. See [Idle cash](#idle-cash) for the opt-in
+  reinvestment assumption.
 
 ## API
 
 | Route | Purpose |
 |---|---|
-| `POST /gilt-ladder/api/ladder` | Build a ladder. Body: `liabilities[]`, `portfolioValue`, `marginalRate`, `lotSize`, `bufferBusinessDays`, `observedPrices[]`, `existingHoldings[]`, `otherIncome`, `accruedIncomeScheme` |
+| `POST /gilt-ladder/api/ladder` | Build a ladder. Body: `liabilities[]`, `portfolioValue`, `marginalRate`, `lotSize`, `bufferBusinessDays`, `observedPrices[]`, `existingHoldings[]`, `otherIncome`, `reinvestment`, `accruedIncomeScheme` |
 | `GET /gilt-ladder/api/universe` | The gilt universe and whether it is real or sample |
 | `GET /gilt-ladder/api/curve` | The cached curve, its date, and whether it is stale |
 | `GET /gilt-ladder/api/health` | Liveness; 503 if the universe failed validation |
@@ -543,6 +576,7 @@ lib/recost.js              Daily re-costing policy and alert wording
 lib/exports.js             CSV dealing list / cash flows, and the .ics feed
 lib/tax.js                 Savings allowances, tax years, the banded rate
 lib/scenarios.js           Curve shifts and twists for sensitivity
+lib/reinvest.js            Implied-forward growth for cash waiting to be spent
 config/taxYears.js         Allowances by tax year - CHECK AGAINST GOV.UK
 lib/zip.js                 Minimal zip reader (so no unzip binary is needed)
 lib/xlsx.js                Minimal xlsx reader for the DMO export

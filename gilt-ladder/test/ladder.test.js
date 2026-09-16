@@ -896,3 +896,81 @@ test('a liability with no matching gilt reports a shortfall rather than a false 
   assert.ok(result.holdings.some((h) => h.widenedSearch), 'the widened search is what caused it');
   assert.ok(result.warnings.some((w) => w.type === 'idle-cash'));
 });
+
+// --- Reinvestment of idle cash ---------------------------------------------
+
+test('the default leaves idle cash earning nothing', () => {
+  const result = buildLadder({ ...base, liabilities: [{ date: '2050-06-30', amount: 10000 }] });
+  assert.equal(result.totals.reinvestmentIncome, 0);
+  assert.equal(result.totals.reinvestment, 'none');
+  assert.match(result.warnings[0].message, /earning nothing/);
+});
+
+test('reinvestment shrinks the rung that funds a distant liability', () => {
+  const liabilities = [{ date: '2050-06-30', amount: 50000 }];
+  const idle = buildLadder({ ...base, liabilities });
+  const grown = buildLadder({ ...base, liabilities, reinvestment: 'forward' });
+
+  assert.ok(grown.holdings[0].nominal < idle.holdings[0].nominal, 'less has to be bought');
+  assert.ok(grown.totals.cost < idle.totals.cost);
+  assert.ok(grown.totals.reinvestmentIncome > 0);
+  assert.ok(grown.fullyFunded, 'and it still funds the liability');
+});
+
+// The size of the effect is the size of the assumption, so it has to scale
+// with how long the money actually waits. A well-matched rung still has a few
+// weeks of idle cash - gilts do not redeem on the day a liability falls due -
+// so the claim is not that it changes nothing, but that it barely changes
+// anything next to a rung that waits fifteen years.
+test('the reinvestment effect scales with how long the cash waits', () => {
+  const effect = (date) => {
+    const liabilities = [{ date, amount: 20000 }];
+    const idle = buildLadder({ ...base, liabilities });
+    const grown = buildLadder({ ...base, liabilities, reinvestment: 'forward' });
+    return {
+      saved: (idle.totals.cost - grown.totals.cost) / idle.totals.cost,
+      idleDays: idle.holdings[0].idleDays,
+    };
+  };
+
+  const matched = effect('2030-06-30'); // a rung redeeming three months early
+  const stranded = effect('2050-06-30'); // nothing redeems within fifteen years
+
+  assert.ok(stranded.idleDays > matched.idleDays * 10);
+  assert.ok(matched.saved < 0.02, `a well-matched rung barely moves, got ${matched.saved}`);
+  assert.ok(stranded.saved > 0.3, `a stranded one moves a lot, got ${stranded.saved}`);
+});
+
+// Selection has to see the assumption too, or the ladder would go on choosing
+// as though the money sat idle and then report interest it had not selected for.
+test('reinvestment reaches the ranking, not just the arithmetic', () => {
+  const liabilities = [{ date: '2050-06-30', amount: 50000 }];
+  const idle = buildLadder({ ...base, liabilities });
+  const grown = buildLadder({ ...base, liabilities, reinvestment: 'forward' });
+
+  assert.ok(
+    grown.diagnostics.selection[0].perUnit < idle.diagnostics.selection[0].perUnit,
+    'cost per £1 the liability receives must fall'
+  );
+  assert.equal(
+    grown.diagnostics.selection[0].perUnitAtRedemption,
+    idle.diagnostics.selection[0].perUnitAtRedemption,
+    'while the cost per £1 at redemption is unchanged'
+  );
+});
+
+test('the idle-cash warning says when it rests on an assumption', () => {
+  const result = buildLadder({
+    ...base,
+    reinvestment: 'forward',
+    liabilities: [{ date: '2050-06-30', amount: 10000 }],
+  });
+  assert.match(result.warnings[0].message, /assumption, not a rate anyone is offering/);
+});
+
+test('reinvestment interest is taxed like any other savings income', () => {
+  const liabilities = [{ date: '2050-06-30', amount: 50000 }];
+  const untaxed = buildLadder({ ...base, liabilities, reinvestment: 'forward', marginalRate: 0 });
+  const taxed = buildLadder({ ...base, liabilities, reinvestment: 'forward', marginalRate: 0.45 });
+  assert.ok(taxed.totals.reinvestmentIncome < untaxed.totals.reinvestmentIncome);
+});

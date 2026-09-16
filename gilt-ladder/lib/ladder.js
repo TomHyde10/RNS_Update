@@ -28,6 +28,7 @@ const {
 const { discountTo } = require('./curve');
 const { expand: expandLiabilities, escalate } = require('./liabilities');
 const { taxYearOf, taxByYear, ratesByYear, checkedAgainst: taxCheckedAgainst } = require('./tax');
+const { valueAt } = require('./reinvest');
 
 const DEFAULTS = {
   // Cash must land this many business days before the liability it funds.
@@ -45,6 +46,12 @@ const DEFAULTS = {
   marginalRate: 0,
   // T+1 is the gilt settlement convention.
   settlementBusinessDays: 1,
+  // What idle cash does between arriving and being spent. 'none' - the
+  // default - is that it earns nothing, which is conservative and is the only
+  // assumption-free answer. 'forward' reinvests it at the curve's own implied
+  // forward rate. The default does not move, because the wrong reinvestment
+  // assumption flatters the ladder into looking cheaper than it is.
+  reinvestment: 'none',
   // Accrued Income Scheme: 'auto', true or false. 'auto' applies it whenever
   // there is tax to relieve and the ladder is large enough to be within the
   // scheme - see AIS_NOMINAL_THRESHOLD.
@@ -298,11 +305,24 @@ function buildLadder(request) {
   // Credit the flow to the earliest liability the money can still reach.
   // Shared by gilts already owned and by the rungs bought below, so both sides
   // of the portfolio are applied under exactly the same rule.
+  const reinvesting = options.reinvestment === 'forward';
+  const rateAt = rateResolver(rateFor);
+
   const creditAgainstLiabilities = (flows) => {
     for (const flow of flows) {
       const target = liabilities.findIndex((l, j) => flow.date <= fundBy[j]);
       if (target === -1) continue; // arrives too late to fund anything - surplus
-      residual[target] -= flow.amount;
+      // Money that arrives early is worth more by the time it is needed, but
+      // only if it is assumed to be reinvested. With the default it is worth
+      // exactly what arrived.
+      residual[target] -= valueAt(flow.amount, {
+        curve,
+        settlement,
+        from: flow.date,
+        to: fundBy[target],
+        rate: rateAt(fundBy[target]),
+        enabled: reinvesting,
+      });
     }
   };
 
@@ -388,11 +408,32 @@ function buildLadder(request) {
       continue;
     }
 
-    candidates.sort((a, b) => a.cost.perUnit - b.cost.perUnit);
+    // With reinvestment assumed, £1 delivered at redemption is worth more than
+    // £1 by the time the liability falls due, so a gilt redeeming early is
+    // less penalised than it is under the zero-growth default. That has to
+    // reach the RANKING as well as the sizing, or the ladder would go on
+    // choosing as though the money sat idle and then quietly report the
+    // interest it had not selected for.
+    const growth = (candidate) =>
+      valueAt(1, {
+        curve,
+        settlement,
+        from: candidate.gilt.redemption,
+        to: latest,
+        rate: rateAt(latest),
+        enabled: reinvesting,
+      });
+
+    for (const candidate of candidates) {
+      candidate.growth = growth(candidate);
+      candidate.costAtLiability = candidate.cost.perUnit / candidate.growth;
+    }
+
+    candidates.sort((a, b) => a.costAtLiability - b.costAtLiability);
     const chosen = candidates[0];
     const runnerUp = candidates[1];
 
-    const exactNominal = (residual[i] / chosen.cost.delivered) * 100;
+    const exactNominal = (residual[i] / (chosen.cost.delivered * chosen.growth)) * 100;
     const nominal = Math.ceil(exactNominal / lotSize) * lotSize;
 
     const flows = holdingFlows(chosen.gilt, nominal, settlement, rateFor, chosen.cost.aisRelief);
@@ -429,8 +470,14 @@ function buildLadder(request) {
     selection.push({
       liability: liabilities[i].date,
       chosen: chosen.gilt.name,
-      perUnit: chosen.cost.perUnit,
-      runnerUp: runnerUp ? { name: runnerUp.gilt.name, perUnit: runnerUp.cost.perUnit } : null,
+      // Cost per £1 the liability actually receives, which is what the rung
+      // was chosen on. Equal to the cost per £1 delivered at redemption unless
+      // reinvestment is assumed.
+      perUnit: chosen.costAtLiability,
+      perUnitAtRedemption: chosen.cost.perUnit,
+      runnerUp: runnerUp
+        ? { name: runnerUp.gilt.name, perUnit: runnerUp.costAtLiability }
+        : null,
       candidates: candidates.length,
     });
 
@@ -499,6 +546,7 @@ function buildLadder(request) {
     settlement,
     options,
     accruedIncomeScheme,
+    reinvesting,
     existing,
     // The coverage walk has to credit cash at exactly the rate the
     // construction spent against, or it reports a shortfall the ladder does
@@ -522,6 +570,7 @@ function summarise({
   settlement,
   options,
   accruedIncomeScheme,
+  reinvesting,
   rateFor,
   taxRows,
   taxPasses,
@@ -552,13 +601,36 @@ function summarise({
   // Walk forwards through time carrying cash, to confirm each liability is met
   // from money that had actually arrived by then.
   let cash = 0;
+  let cashAt = settlement;
   let flowIndex = 0;
+  let reinvestmentIncome = 0;
+  const rateAt = rateResolver(rateFor);
+
+  // Everything is valued AT each liability's deadline: cash already carried is
+  // grown forward from the last one, and each arriving flow is grown from the
+  // day it lands. With reinvestment off both are the identity, which is what
+  // keeps the default path byte-for-byte what it was.
+  const carry = (amount, from, to) => {
+    const grown = valueAt(amount, {
+      curve,
+      settlement,
+      from,
+      to,
+      rate: rateAt(to),
+      enabled: reinvesting,
+    });
+    reinvestmentIncome += grown - amount;
+    return grown;
+  };
+
   const coverage = liabilities.map((liability) => {
     const deadline = toISO(addBusinessDays(liability.date, -options.bufferBusinessDays));
+    cash = carry(cash, cashAt, deadline);
     while (flowIndex < flows.length && flows[flowIndex].date <= deadline) {
-      cash += flows[flowIndex].amount;
+      cash += carry(flows[flowIndex].amount, flows[flowIndex].date, deadline);
       flowIndex++;
     }
+    cashAt = deadline;
     const covered = cash >= liability.amount - 0.005;
     cash -= liability.amount;
     return {
@@ -593,9 +665,12 @@ function summarise({
       liability: h.fundsLiability,
       isin: h.isin,
       idleDays: h.idleDays,
-      message:
-        `${h.name} redeems ${h.idleDays} days before the ${h.fundsLiability} liability; ` +
-        'the proceeds sit in cash until then, earning nothing in this model.',
+      message: reinvesting
+        ? `${h.name} redeems ${h.idleDays} days before the ${h.fundsLiability} liability; ` +
+          'the proceeds are assumed reinvested at the curve\'s implied forward rate until then, ' +
+          'which is an assumption, not a rate anyone is offering.'
+        : `${h.name} redeems ${h.idleDays} days before the ${h.fundsLiability} liability; ` +
+          'the proceeds sit in cash until then, earning nothing in this model.',
     }));
 
   // A redemption past the end of the curve is not wrong so much as
@@ -679,6 +754,12 @@ function summarise({
       // cash that still has to be spent.
       existingValue: existing.reduce((sum, h) => sum + (h.value || 0), 0),
       existingCount: existing.length,
+      // Interest assumed earned on money waiting to be spent. Zero unless
+      // reinvestment was asked for, and reported separately so the part of the
+      // answer that rests on an assumption is never mixed into the part that
+      // does not.
+      reinvestmentIncome,
+      reinvestment: options.reinvestment,
     },
     fullyFunded: shortfalls.length === 0 && unfunded.length === 0,
     warnings,

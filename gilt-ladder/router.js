@@ -163,6 +163,10 @@ function validateRequest(body) {
     problems.push('otherIncome must be zero or positive');
   }
 
+  if (body.reinvestment != null && !['none', 'forward'].includes(body.reinvestment)) {
+    problems.push("reinvestment must be 'none' or 'forward'");
+  }
+
   if (body.accruedIncomeScheme != null && !['auto', true, false].includes(body.accruedIncomeScheme)) {
     problems.push("accruedIncomeScheme must be 'auto', true or false");
   }
@@ -231,6 +235,7 @@ async function handleLadder(req, res) {
       observedPrices: body.observedPrices || [],
       existingHoldings: body.existingHoldings || [],
       otherIncome: body.otherIncome == null ? null : Number(body.otherIncome),
+      reinvestment: body.reinvestment == null ? DEFAULTS.reinvestment : body.reinvestment,
       accruedIncomeScheme:
         body.accruedIncomeScheme == null ? DEFAULTS.accruedIncomeScheme : body.accruedIncomeScheme,
       settlement,

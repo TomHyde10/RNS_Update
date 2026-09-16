@@ -46,6 +46,14 @@
             <span class="hint">salary or pension, before tax; optional</span>
             <input id="other-income" type="number" min="0" step="1000" placeholder="e.g. 10000" />
           </label>
+          <label>
+            Idle cash
+            <span class="hint">money waiting to be spent</span>
+            <select id="reinvestment">
+              <option value="none">Earns nothing</option>
+              <option value="forward">Reinvested at the curve's forward rate</option>
+            </select>
+          </label>
           <label class="check">
             <span class="check-row">
               <input id="ais" type="checkbox" checked />
