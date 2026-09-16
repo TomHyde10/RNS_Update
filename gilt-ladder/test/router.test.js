@@ -77,3 +77,56 @@ describe('gilt-ladder router', () => {
     assert.equal(res.status, 405);
   });
 });
+
+// validateRequest is exercised directly rather than over HTTP: it is the only
+// thing standing between a mistyped quote and a confidently wrong ladder, and
+// it runs before the curve is ever fetched, so none of this needs the network.
+describe('observed price validation', () => {
+  const ok = { liabilities: [{ date: '2030-06-30', amount: 1000 }] };
+
+  it('accepts a well-formed quote', () => {
+    const problems = giltLadder.validateRequest({
+      ...ok,
+      observedPrices: [{ isin: 'GB00BMBL1D50', clean: 96.42 }],
+    });
+    assert.deepEqual(problems, []);
+  });
+
+  it('accepts a lowercase ISIN, since that is what gets pasted', () => {
+    const problems = giltLadder.validateRequest({
+      ...ok,
+      observedPrices: [{ isin: 'gb00bmbl1d50', clean: 96.42 }],
+    });
+    assert.deepEqual(problems, []);
+  });
+
+  it('rejects a malformed ISIN', () => {
+    const problems = giltLadder.validateRequest({ ...ok, observedPrices: [{ isin: 'NOPE', clean: 96 }] });
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /invalid ISIN/);
+  });
+
+  // A price in pence, and a nominal amount pasted into the price column: the
+  // two mistakes that would otherwise produce a plausible-looking ladder off a
+  // price wrong by two orders of magnitude.
+  it('rejects prices outside the plausible band for £100 nominal', () => {
+    for (const clean of [0.9642, 9642, 0, -5]) {
+      const problems = giltLadder.validateRequest({
+        ...ok,
+        observedPrices: [{ isin: 'GB00BMBL1D50', clean }],
+      });
+      assert.equal(problems.length, 1, `expected ${clean} to be rejected`);
+      assert.match(problems[0], /clean price must be between/);
+    }
+  });
+
+  it('rejects a non-array and over-long price lists', () => {
+    assert.match(giltLadder.validateRequest({ ...ok, observedPrices: 'x' })[0], /must be an array/);
+    const many = Array.from({ length: 201 }, () => ({ isin: 'GB00BMBL1D50', clean: 96 }));
+    assert.match(giltLadder.validateRequest({ ...ok, observedPrices: many })[0], /at most 200/);
+  });
+
+  it('leaves requests with no quotes alone', () => {
+    assert.deepEqual(giltLadder.validateRequest(ok), []);
+  });
+});

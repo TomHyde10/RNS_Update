@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { getCurve } = require('./lib/curveStore');
-const { load: loadUniverse, activeAt } = require('./lib/universe');
+const { load: loadUniverse, activeAt, ISIN_RE } = require('./lib/universe');
 const { buildLadder, DEFAULTS } = require('./lib/ladder');
 const { toISO, addBusinessDays } = require('./lib/calendar');
 
@@ -13,6 +13,13 @@ const MOUNT = '/gilt-ladder';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_LIABILITIES = 200;
+const MAX_OBSERVED_PRICES = 200;
+// A conventional gilt's clean price per £100 nominal. The band is wide on
+// purpose - a 0.5% 2061 has traded in the 20s and a high-coupon long gilt can
+// sit well above par - but it still catches the two mistakes that matter: a
+// price entered in pence, and a nominal amount pasted into the price column.
+const MIN_CLEAN_PRICE = 1;
+const MAX_CLEAN_PRICE = 250;
 
 // A malformed universe is a deployment error, but it must not take the RNS
 // app down with it: record the failure and answer every gilt route with it.
@@ -101,6 +108,32 @@ function validateRequest(body) {
   if (body.lotSize != null && !(Number(body.lotSize) > 0)) {
     problems.push('lotSize must be positive');
   }
+
+  if (body.observedPrices != null) {
+    if (!Array.isArray(body.observedPrices)) {
+      problems.push('observedPrices must be an array');
+    } else if (body.observedPrices.length > MAX_OBSERVED_PRICES) {
+      problems.push(`at most ${MAX_OBSERVED_PRICES} observed prices`);
+    } else {
+      body.observedPrices.forEach((p, i) => {
+        const where = `observedPrices[${i}]`;
+        if (!p || typeof p !== 'object') {
+          problems.push(`${where}: not an object`);
+          return;
+        }
+        if (!ISIN_RE.test(String(p.isin).trim().toUpperCase())) {
+          problems.push(`${where}: invalid ISIN ${JSON.stringify(p.isin)}`);
+        }
+        const clean = Number(p.clean);
+        if (!Number.isFinite(clean) || clean < MIN_CLEAN_PRICE || clean > MAX_CLEAN_PRICE) {
+          problems.push(
+            `${where}: clean price must be between ${MIN_CLEAN_PRICE} and ${MAX_CLEAN_PRICE} per £100 nominal`
+          );
+        }
+      });
+    }
+  }
+
   return problems;
 }
 
@@ -137,6 +170,7 @@ async function handleLadder(req, res) {
       lotSize: body.lotSize == null ? DEFAULTS.lotSize : Number(body.lotSize),
       bufferBusinessDays:
         body.bufferBusinessDays == null ? DEFAULTS.bufferBusinessDays : Number(body.bufferBusinessDays),
+      observedPrices: body.observedPrices || [],
       settlement,
       curve: curveEntry.curve,
       universe: activeAt(universe, settlement),
@@ -148,12 +182,18 @@ async function handleLadder(req, res) {
       // indicative, and the UI states that rather than letting a number that
       // looks like a price imply it is dealable.
       provenance: {
-        priceBasis: 'derived from the Bank of England nominal gilt spot curve',
+        priceBasis:
+          result.pricing.pricedRungs > 0
+            ? 'quoted clean prices you supplied where given, otherwise derived from the Bank of England nominal gilt spot curve'
+            : 'derived from the Bank of England nominal gilt spot curve',
         curveDate: curveEntry.curve.date,
         curveFetchedAt: curveEntry.fetchedAt,
         curveStale: Boolean(curveEntry.stale),
         universeSource: universe.source,
         universeAsOf: universe.asOf,
+        // Stays true even when every rung was bought at a quoted price: the
+        // intermediate coupons are still valued off the curve, and nothing
+        // here accounts for dealing costs or commission.
         indicative: true,
       },
     });

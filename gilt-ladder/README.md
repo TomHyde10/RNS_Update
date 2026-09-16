@@ -42,6 +42,13 @@ they carry no individual gilt's richness or cheapness, they exclude dealing
 costs and commission, and **you cannot deal at them**. Every result is labelled
 indicative.
 
+**Unless you supply prices yourself.** The one real price this application can
+see is a quote you paste in: the Observed prices panel takes a clean price per
+£100 nominal for any ISIN in the universe, and that price then drives both the
+cost and the selection for that gilt. Each holding is labelled `quoted` or
+`derived`, so a mixed ladder never reads as though it were all one or the
+other. See [Observed prices](#observed-prices).
+
 **Why not real prices.** The DMO stopped publishing end-of-day gilt reference
 prices in 2017; that passed to FTSE-Tradeweb, which is a licensed feed. The
 DMO's own remaining daily data sits behind a bot wall that blocks servers
@@ -89,6 +96,37 @@ spot curve to within trapezoid error under continuous compounding, and is off by
 a systematic ~20bp under annual compounding — which would be a >1% price error
 on a 30-year gilt, in one direction, with nothing to make it visible. It is
 asserted in `test/curve.test.js` rather than left to a comment.
+
+## Observed prices
+
+Everything else here is modelled. A price you copy from your broker is not, so
+it is worth more than anything the curve can produce — and it is the only route
+to a dealable answer that does not need a licensed feed.
+
+Give any gilt a **clean** price per £100 nominal and:
+
+- accrued interest is added for you, on the same ACT/ACT (ICMA) basis and with
+  the same ex-dividend sign convention as everywhere else, so the dirty price
+  you are charged follows from the price you were shown;
+- that price replaces the derived one in the selection criterion, so a gilt
+  that is genuinely cheap in the market — not merely cheap on a fitted curve —
+  can take the rung;
+- the holding is labelled `quoted`, and the response's `pricing` block says how
+  many rungs rest on quotes rather than on the model.
+
+The intermediate coupons are still valued off the curve. A quote is a price for
+the whole bond today; it says nothing about what that bond's individual future
+coupons are worth. Mixing the two is deliberate — the leg that can be observed
+is observed, the leg that cannot is still modelled — and `priceSource` records
+which is which rather than letting them blend.
+
+Results stay labelled indicative even when every rung is quoted, because the
+coupon valuation is still modelled and nothing here accounts for dealing costs
+or commission.
+
+A price for an ISIN that is not in the universe is **reported, not ignored** —
+almost always a mistyped ISIN, and silently dropping it would leave you
+believing a rung was priced from the market when it was not.
 
 ## The bond mathematics
 
@@ -153,7 +191,7 @@ records the runner-up for each rung so the gap is visible.
 
 | Route | Purpose |
 |---|---|
-| `POST /gilt-ladder/api/ladder` | Build a ladder. Body: `liabilities[]`, `portfolioValue`, `marginalRate`, `lotSize`, `bufferBusinessDays` |
+| `POST /gilt-ladder/api/ladder` | Build a ladder. Body: `liabilities[]`, `portfolioValue`, `marginalRate`, `lotSize`, `bufferBusinessDays`, `observedPrices[]` |
 | `GET /gilt-ladder/api/universe` | The gilt universe and whether it is real or sample |
 | `GET /gilt-ladder/api/curve` | The cached curve, its date, and whether it is stale |
 | `GET /gilt-ladder/api/health` | Liveness; 503 if the universe failed validation |

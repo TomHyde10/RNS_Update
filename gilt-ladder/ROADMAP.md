@@ -21,7 +21,7 @@ the tax logic the app's headline claim rests on (2), before adding scope.
 - [x] **0. Roadmap and a working test command.**
       `node --test test/ gilt-ladder/test/` does not resolve directory
       arguments on Node 22, so `npm test` failed before any of this started.
-- [ ] **1. Manual clean-price override.** Accept observed clean prices per
+- [x] **1. Manual clean-price override.** Accept observed clean prices per
       ISIN and run selection against them, falling back to curve-derived
       prices for the rest. Provenance becomes per-holding. The only route to
       a dealable answer that needs no licensed feed.

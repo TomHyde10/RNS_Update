@@ -60,20 +60,41 @@ function holdingFlows(gilt, nominal, settlement, marginalRate) {
 // tax-aware through afterTaxAmount, and crediting the intermediate coupons
 // stops it preferring a zero-coupon-like gilt purely because its redemption
 // row looks cheap in isolation.
-function netCostPerUnit(gilt, settlement, curve, marginalRate) {
-  const { dirty, flows } = priceFromCurve(gilt, settlement, curve);
+//
+// `observedClean` is a real quoted clean price for this gilt, supplied by the
+// user from their broker. When present it replaces the curve-derived price for
+// THIS gilt's purchase cost only: the intermediate coupons are still valued off
+// the curve, because a quoted price is a price for the whole bond today and
+// says nothing about what its individual future coupons are worth. Mixing the
+// two is the honest construction - the leg you can observe is observed, the leg
+// you cannot is still modelled - and `source` records which.
+function netCostPerUnit(gilt, settlement, curve, marginalRate, observedClean = null) {
+  const priced = priceFromCurve(gilt, settlement, curve);
+  const flows = priced.flows;
   if (!flows.length) return null;
 
   const redemption = flows[flows.length - 1];
   const delivered = afterTaxAmount(redemption, marginalRate);
   if (delivered <= 0) return null;
 
+  // Accrued is the buyer's either way, so an observed CLEAN price becomes the
+  // dirty price the same way the derived one does. In the ex-dividend window
+  // accrued is negative and dirty falls below clean, which is correct.
+  const dirty = observedClean == null ? priced.dirty : observedClean + priced.accrued;
+
   let pvIntermediate = 0;
   for (const flow of flows.slice(0, -1)) {
     pvIntermediate += afterTaxAmount(flow, marginalRate) * discountTo(curve, yearsBetween(settlement, flow.paidOn));
   }
 
-  return { perUnit: (dirty - pvIntermediate) / delivered, dirty, delivered };
+  return {
+    perUnit: (dirty - pvIntermediate) / delivered,
+    dirty,
+    delivered,
+    clean: dirty - priced.accrued,
+    accrued: priced.accrued,
+    source: observedClean == null ? 'derived' : 'observed',
+  };
 }
 
 function buildLadder(request) {
@@ -93,6 +114,20 @@ function buildLadder(request) {
   if (liabilities[0].date <= settlement) {
     throw new Error(`first liability (${liabilities[0].date}) is not after settlement (${settlement})`);
   }
+
+  // Observed clean prices, keyed by ISIN. These are quotes the user has copied
+  // from their broker: the one input that turns an indicative ladder into a
+  // dealable one, since nothing in this application can fetch a real price.
+  const observedPrices = new Map(
+    (request.observedPrices || [])
+      .filter((p) => p && p.isin != null && Number.isFinite(Number(p.clean)))
+      .map((p) => [String(p.isin).trim().toUpperCase(), Number(p.clean)])
+  );
+  // A price for a gilt that is not in the universe is almost always a typo in
+  // an ISIN, and silently ignoring it would leave the user believing they had
+  // priced a rung they had not. Reported, not dropped.
+  const universeIsins = new Set(universe.map((g) => g.isin));
+  const ignoredPrices = [...observedPrices.keys()].filter((isin) => !universeIsins.has(isin));
 
   // Latest date cash may arrive and still fund each liability.
   const fundBy = liabilities.map((l) => toISO(addBusinessDays(l.date, -bufferBusinessDays)));
@@ -114,7 +149,10 @@ function buildLadder(request) {
     const earliest = i > 0 ? liabilities[i - 1].date : settlement;
 
     const priced = universe
-      .map((gilt) => ({ gilt, cost: netCostPerUnit(gilt, settlement, curve, marginalRate) }))
+      .map((gilt) => ({
+        gilt,
+        cost: netCostPerUnit(gilt, settlement, curve, marginalRate, observedPrices.get(gilt.isin) ?? null),
+      }))
       .filter((c) => c.cost && c.gilt.redemption <= latest);
 
     let candidates = priced.filter((c) => c.gilt.redemption > earliest);
@@ -146,6 +184,13 @@ function buildLadder(request) {
       redemption: chosen.gilt.redemption,
       nominal,
       dirtyPrice: chosen.cost.dirty,
+      // The clean price is what a gilt is quoted and dealt on; accrued is the
+      // separate line on the contract note. A dealing instruction needs both,
+      // and showing them is what makes an observed price checkable against the
+      // screen it was copied from.
+      cleanPrice: chosen.cost.clean,
+      accrued: chosen.cost.accrued,
+      priceSource: chosen.cost.source,
       cost,
       fundsLiability: liabilities[i].date,
       // Days the redemption proceeds sit in cash before the liability falls due.
@@ -171,10 +216,19 @@ function buildLadder(request) {
     }
   }
 
-  return summarise({ liabilities, holdings, selection, unfunded, residual, settlement, options });
+  return summarise({
+    liabilities,
+    holdings,
+    selection,
+    unfunded,
+    residual,
+    settlement,
+    options,
+    pricing: { observed: observedPrices.size, ignored: ignoredPrices },
+  });
 }
 
-function summarise({ liabilities, holdings, selection, unfunded, residual, settlement, options }) {
+function summarise({ liabilities, holdings, selection, unfunded, residual, settlement, options, pricing }) {
   const { curve, portfolioValue, marginalRate } = options;
   const totalCost = holdings.reduce((sum, h) => sum + h.cost, 0);
 
@@ -234,6 +288,14 @@ function summarise({ liabilities, holdings, selection, unfunded, residual, settl
         'the proceeds sit in cash until then, earning nothing in this model.',
     }));
 
+  for (const isin of pricing.ignored) {
+    warnings.push({
+      type: 'price-ignored',
+      isin,
+      message: `No gilt in the universe has ISIN ${isin}, so the price given for it was not used.`,
+    });
+  }
+
   return {
     settlement,
     curveDate: curve.date,
@@ -254,6 +316,16 @@ function summarise({ liabilities, holdings, selection, unfunded, residual, settl
     fullyFunded: shortfalls.length === 0 && unfunded.length === 0,
     warnings,
     unfunded: [...unfunded, ...shortfalls.filter((s) => s.shortfall > 0.005)],
+    // How much of this answer rests on prices that were observed rather than
+    // derived. `pricedRungs` counts the holdings actually bought at a quoted
+    // price, which is the number that decides whether the total cost means
+    // anything in the market.
+    pricing: {
+      observedPrices: pricing.observed,
+      pricedRungs: holdings.filter((h) => h.priceSource === 'observed').length,
+      derivedRungs: holdings.filter((h) => h.priceSource !== 'observed').length,
+      ignored: pricing.ignored,
+    },
     diagnostics: { selection, finalResiduals: residual },
   };
 }

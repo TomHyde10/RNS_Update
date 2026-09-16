@@ -53,6 +53,55 @@ function addLiabilityRow(date = '', amount = '') {
   tbody.appendChild(tr);
 }
 
+function addPriceRow(isin = '', clean = '') {
+  const tbody = $('prices').querySelector('tbody');
+  if ([...tbody.querySelectorAll('.price-isin')].some((i) => i.value.trim().toUpperCase() === isin)) return;
+
+  const tr = document.createElement('tr');
+
+  const isinCell = document.createElement('td');
+  const isinInput = document.createElement('input');
+  isinInput.type = 'text';
+  isinInput.className = 'price-isin';
+  isinInput.setAttribute('list', 'universe-isins');
+  isinInput.placeholder = 'GB00B16NNR78';
+  isinInput.value = isin;
+  isinCell.appendChild(isinInput);
+
+  const cleanCell = document.createElement('td');
+  const cleanInput = document.createElement('input');
+  cleanInput.type = 'number';
+  cleanInput.min = '1';
+  cleanInput.max = '250';
+  cleanInput.step = '0.01';
+  cleanInput.className = 'price-clean';
+  cleanInput.placeholder = '96.42';
+  cleanInput.value = clean;
+  cleanCell.appendChild(cleanInput);
+
+  const removeCell = document.createElement('td');
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'link';
+  remove.textContent = 'Remove';
+  remove.addEventListener('click', () => tr.remove());
+  removeCell.appendChild(remove);
+
+  tr.append(isinCell, cleanCell, removeCell);
+  tbody.appendChild(tr);
+}
+
+// Only fully-completed rows are sent. A half-typed row is a row in progress,
+// not a validation error to shout about.
+function readObservedPrices() {
+  return [...document.querySelectorAll('#prices tbody tr')]
+    .map((tr) => ({
+      isin: tr.querySelector('.price-isin').value.trim().toUpperCase(),
+      clean: Number(tr.querySelector('.price-clean').value),
+    }))
+    .filter((p) => p.isin && Number.isFinite(p.clean) && p.clean > 0);
+}
+
 function readLiabilities() {
   return [...document.querySelectorAll('#liabilities tbody tr')]
     .map((tr) => ({
@@ -112,7 +161,12 @@ function renderHoldings(holdings) {
         <td class="num">${h.coupon.toFixed(3)}%</td>
         <td>${shortDate(h.redemption)}</td>
         <td class="num">${h.nominal.toLocaleString('en-GB')}</td>
-        <td class="num">${h.dirtyPrice.toFixed(3)}</td>
+        <td class="num">${h.cleanPrice.toFixed(3)}${
+          h.priceSource === 'observed'
+            ? ' <span class="pill yes" title="A price you supplied">quoted</span>'
+            : ' <span class="pill derived" title="Derived from the Bank of England curve">derived</span>'
+        }</td>
+        <td class="num">${h.accrued.toFixed(3)}</td>
         <td class="num">${gbpExact(h.cost)}</td>
         <td>${shortDate(h.fundsLiability)}</td>
       </tr>`
@@ -202,9 +256,12 @@ function renderChart(result) {
     </svg>`;
 }
 
-function renderProvenance(p) {
+function renderProvenance(p, pricing) {
   const bits = [
     `Prices ${p.priceBasis}, dated ${shortDate(p.curveDate)}.`,
+    pricing && pricing.pricedRungs
+      ? `${pricing.pricedRungs} of ${pricing.pricedRungs + pricing.derivedRungs} rungs bought at a price you supplied.`
+      : '',
     p.curveStale ? 'The curve could not be refreshed — this is the last one retrieved.' : '',
     `Gilt universe: ${p.universeSource}${p.universeAsOf ? ` as at ${shortDate(p.universeAsOf)}` : ''}.`,
     'Indicative only: these are not dealable prices and exclude dealing costs and commission.',
@@ -235,6 +292,7 @@ async function build() {
         marginalRate: Number($('marginal-rate').value),
         lotSize: Number($('lot-size').value),
         bufferBusinessDays: Number($('buffer').value),
+        observedPrices: readObservedPrices(),
       }),
     });
 
@@ -249,7 +307,11 @@ async function build() {
     renderHoldings(body.holdings);
     renderCoverage(body.coverage);
     renderChart(body);
-    renderProvenance(body.provenance);
+    renderProvenance(body.provenance, body.pricing);
+    // The gilts this ladder picked are the shortlist worth going and getting
+    // real prices for, so make pre-filling them one click.
+    lastHoldings = body.holdings;
+    $('price-ladder').disabled = !lastHoldings.length;
     $('results').hidden = false;
     setStatus(`Settled ${shortDate(body.settlement)} against the ${shortDate(body.curveDate)} curve.`);
   } catch (err) {
@@ -259,9 +321,18 @@ async function build() {
   }
 }
 
+// The holdings from the most recent build, so "Add the gilts in this ladder"
+// can seed the price table with exactly the shortlist that matters.
+let lastHoldings = [];
+
 async function init() {
   $('add-liability').addEventListener('click', () => addLiabilityRow());
+  $('add-price').addEventListener('click', () => addPriceRow());
   $('build').addEventListener('click', build);
+  $('price-ladder').addEventListener('click', () => {
+    for (const holding of lastHoldings) addPriceRow(holding.isin, holding.cleanPrice.toFixed(3));
+    $('prices-panel').open = true;
+  });
 
   // Seed with a plausible shape so the page is usable immediately.
   const year = new Date().getUTCFullYear();
@@ -272,6 +343,9 @@ async function init() {
   try {
     const universe = await fetch('api/universe').then((r) => r.json());
     if (universe.source === 'sample') $('sample-banner').hidden = false;
+    $('universe-isins').innerHTML = universe.gilts
+      .map((g) => `<option value="${g.isin}">${g.name}</option>`)
+      .join('');
   } catch {
     // The banner is a safety net, not a blocker - if this call fails the build
     // request will surface the problem properly.

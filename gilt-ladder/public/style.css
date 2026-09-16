@@ -276,6 +276,41 @@ th {
   color: var(--bad);
 }
 
+/* A price the user supplied reads as a fact; one this application worked out
+   reads as an assumption. They sit in the same column, so they must not look
+   the same. */
+.pill.derived {
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* The observed-price panel is collapsed by default: it is optional, and the
+   page should not open on a table most sessions never fill in. */
+#prices-panel > summary {
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+#prices-panel > summary > h2 {
+  display: inline;
+  margin: 0;
+}
+
+#prices-panel[open] > summary {
+  margin-bottom: 0.4rem;
+}
+
+.hint.block {
+  display: block;
+  max-width: 62ch;
+  margin: 0.6rem 0 1rem;
+  line-height: 1.5;
+}
+
 .warning {
   margin-top: 1rem;
   padding: 0.7rem 0.9rem;

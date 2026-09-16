@@ -68,6 +68,44 @@
         </table>
         <div class="actions">
           <button id="add-liability" type="button" class="secondary">Add liability</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <details id="prices-panel">
+          <summary>
+            <h2>Observed prices</h2>
+            <span class="hint">optional &mdash; paste the clean prices your broker shows</span>
+          </summary>
+          <p class="hint block">
+            Prices here are otherwise derived from the Bank of England curve and are not dealable.
+            A quote you paste in is the only real price this tool can see: it replaces the derived
+            price for that gilt and can change which gilt each rung buys. Enter the
+            <strong>clean</strong> price per &pound;100 nominal &mdash; accrued interest is added
+            for you.
+          </p>
+          <table id="prices" class="input-table">
+            <thead>
+              <tr>
+                <th>ISIN</th>
+                <th>Clean price</th>
+                <th><span class="sr-only">Remove</span></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <datalist id="universe-isins"></datalist>
+          <div class="actions">
+            <button id="add-price" type="button" class="secondary">Add price</button>
+            <button id="price-ladder" type="button" class="secondary" disabled>
+              Add the gilts in this ladder
+            </button>
+          </div>
+        </details>
+      </section>
+
+      <section class="panel">
+        <div class="actions">
           <button id="build" type="button" class="primary">Build ladder</button>
         </div>
         <p id="status" class="status" role="status"></p>
@@ -91,7 +129,8 @@
                   <th class="num">Coupon</th>
                   <th>Redeems</th>
                   <th class="num">Nominal (&pound;)</th>
-                  <th class="num">Price</th>
+                  <th class="num">Clean</th>
+                  <th class="num">Accrued</th>
                   <th class="num">Cost (&pound;)</th>
                   <th>Funds</th>
                 </tr>

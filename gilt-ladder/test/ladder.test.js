@@ -173,3 +173,89 @@ test('invalid requests fail loudly', () => {
     /not after settlement/
   );
 });
+
+// --- Observed clean prices -------------------------------------------------
+//
+// Prices here are derived from a curve and are not dealable; a quote the user
+// copies from their broker is the only real price this application can ever
+// see. These pin down that such a quote reaches the cost, reaches selection,
+// and is reported as observed rather than blending invisibly into the derived
+// numbers.
+
+test('an observed clean price replaces the derived one and is labelled', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [{ date: '2028-09-30', amount: 20000 }],
+    observedPrices: [{ isin: 'TEST00000001', clean: 80 }],
+  });
+
+  const rung = result.holdings[0];
+  assert.equal(rung.isin, 'TEST00000001');
+  assert.equal(rung.priceSource, 'observed');
+  assert.ok(Math.abs(rung.cleanPrice - 80) < 1e-9, `clean was ${rung.cleanPrice}`);
+  // Dirty is the quoted clean price plus the accrued the buyer also pays.
+  assert.ok(Math.abs(rung.dirtyPrice - (rung.cleanPrice + rung.accrued)) < 1e-9);
+  assert.equal(result.pricing.pricedRungs, 1);
+  assert.equal(result.pricing.derivedRungs, 0);
+});
+
+// The point of the feature: a gilt that is cheap in the market, not merely on
+// the curve, should win the rung. Both 2028 gilts price identically off a flat
+// curve untaxed (asserted above), so any change here is caused by the quote.
+test('a cheap observed price flips which gilt is chosen', () => {
+  const liabilities = [{ date: '2028-09-30', amount: 20000 }];
+
+  const derived = buildLadder({ ...base, liabilities });
+  assert.equal(derived.holdings[0].isin, 'TEST00000001');
+
+  const observed = buildLadder({
+    ...base,
+    liabilities,
+    observedPrices: [{ isin: 'TEST00000002', clean: 90 }],
+  });
+  assert.equal(observed.holdings[0].isin, 'TEST00000002');
+  assert.equal(observed.holdings[0].priceSource, 'observed');
+});
+
+test('ISINs are matched case-insensitively and with surrounding space trimmed', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [{ date: '2028-09-30', amount: 20000 }],
+    observedPrices: [{ isin: ' test00000001 ', clean: 80 }],
+  });
+  assert.equal(result.holdings[0].priceSource, 'observed');
+  assert.deepEqual(result.pricing.ignored, []);
+});
+
+// Silently dropping a price would leave the user believing a rung was priced
+// from the market when it was not - the exact failure this whole feature is
+// meant to remove.
+test('a price for an unknown ISIN is reported, not swallowed', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [{ date: '2028-09-30', amount: 20000 }],
+    observedPrices: [{ isin: 'TEST00000009', clean: 95 }],
+  });
+
+  assert.deepEqual(result.pricing.ignored, ['TEST00000009']);
+  assert.equal(result.holdings[0].priceSource, 'derived');
+  const warning = result.warnings.find((w) => w.type === 'price-ignored');
+  assert.ok(warning, 'expected a price-ignored warning');
+  assert.match(warning.message, /TEST00000009/);
+});
+
+test('rungs with no quote keep their derived price alongside quoted ones', () => {
+  const result = buildLadder({
+    ...base,
+    liabilities: [
+      { date: '2028-09-30', amount: 20000 },
+      { date: '2035-09-30', amount: 40000 },
+    ],
+    observedPrices: [{ isin: 'TEST00000001', clean: 80 }],
+  });
+
+  const sources = Object.fromEntries(result.holdings.map((h) => [h.isin, h.priceSource]));
+  assert.equal(sources.TEST00000001, 'observed');
+  assert.equal(result.pricing.pricedRungs + result.pricing.derivedRungs, result.holdings.length);
+  assert.ok(result.pricing.derivedRungs >= 1);
+});
