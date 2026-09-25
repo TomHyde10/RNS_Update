@@ -1,537 +1,523 @@
 # RNS Update
 
-A lightweight site that shows company report disclosures for a time period
-and set of report types you choose, for a list of companies you manage
-yourself in the page — sourced directly from the FCA's **National Storage
-Mechanism** (data.fca.org.uk), the UK regulator's public repository for
-company disclosures. No API key, no account, no cost.
+A lightweight site that watches a list of companies you manage and shows
+their report disclosures for a time period and set of report types you
+choose — sourced directly from the FCA's **National Storage Mechanism**
+(data.fca.org.uk), the UK regulator's public repository for company
+disclosures. No API key, no account, no cost.
 
-Static HTML/CSS/JS frontend + a small serverless function that proxies the
-NSM search so the browser doesn't need to talk to it directly.
+Static HTML/CSS/JS frontend, backed by either a Vercel serverless function
+or a small persistent Node server, depending on how you deploy it (see
+["Two ways to run this"](#two-ways-to-run-this) below) — the difference
+matters, because several features (a shared watchlist, automatic digests,
+push notifications) only exist on one of the two.
 
-This repository also hosts **Gilt Ladder** (`gilt-ladder/`), a separate tool
-that builds a gilt portfolio to fund dated liabilities. `server.js` serves it
-at `/gilt-ladder/`, behind the same login, and the header's "Gilt Ladder" link
-goes there. It is only available where `server.js` runs, not on Vercel. See
-[gilt-ladder/README.md](gilt-ladder/README.md).
+This repository also hosts **Gilt Ladder** (`gilt-ladder/`), a separate,
+self-contained tool that builds a bond portfolio to fund dated liabilities.
+It's mounted at `/gilt-ladder/` by the same server, behind the same login.
+See ["Gilt Ladder"](#gilt-ladder) below and
+[gilt-ladder/README.md](gilt-ladder/README.md) for the whole thing.
 
-## Setup
+## Contents
 
-1. Run locally:
-   ```
-   npm start
-   ```
-   then open http://localhost:3000. No `.env` setup needed — see `.env.example`.
-2. `config/watchlist.js`'s default companies are merged into the browser's
-   watchlist on **every** page load (via `/api/watchlist` — see
-   `initWatchlist()` in `app.js`), not just the first, so they're always
-   present at startup. Removing one of the defaults via the page only lasts
-   until the next reload, since it's added back in; companies you add
-   beyond the defaults are untouched by this and persist normally. The list
-   otherwise lives in that browser's `localStorage`.
-3. Under "Search settings", choose a **time period** (24 hours to 90 days)
-   and the **report types** to match — checkboxes for the four confirmed
-   category names, plus an "Other report types" field for anything not
-   listed (comma-separated, matched exactly against the filing's category;
-   defaults to "Half-year Financial Report, Annual Financial Report" if you
-   clear everything and hit Apply). These are saved to `localStorage` and
-   sent to `/api/reports` as `days` and `categories` query params.
+- [Quick start](#quick-start)
+- [Two ways to run this](#two-ways-to-run-this)
+- [Using the app](#using-the-app)
+  - [The watchlist and search settings](#the-watchlist-and-search-settings)
+  - [The report list](#the-report-list)
+  - [The filing calendar and estimated due dates](#the-filing-calendar-and-estimated-due-dates)
+  - [Sector/portfolio grouping and saved views](#sectorportfolio-grouping-and-saved-views)
+  - [Shareable links, the RSS feed, and the .ics feed](#shareable-links-the-rss-feed-and-the-ics-feed)
+- [Notifications](#notifications)
+  - [Manual: the Send Notification button](#manual-the-send-notification-button)
+  - [Automatic email digests](#automatic-email-digests)
+  - [Push notifications](#push-notifications)
+- [Authentication](#authentication)
+- [Encrypted view links](#encrypted-view-links)
+- [Sharing data across browsers and devices (Postgres)](#sharing-data-across-browsers-and-devices-postgres)
+  - [The persistent NSM cache](#the-persistent-nsm-cache)
+  - [The shared watchlist](#the-shared-watchlist)
+  - [Shared "seen" tracking](#shared-seen-tracking)
+- [Configuration reference](#configuration-reference)
+- [API integration notes: the NSM search](#api-integration-notes-the-nsm-search)
+- [Deploying](#deploying)
+  - [Vercel](#deploying-vercel)
+  - [Render](#deploying-render)
+  - [Northflank](#deploying-northflank)
+- [Testing](#testing)
+- [Project layout](#project-layout)
+- [Known limitations](#known-limitations)
+- [Gilt Ladder](#gilt-ladder)
 
-`config/watchlist.js` serves two roles: it's what `/api/watchlist` seeds a
-brand-new browser with (see above), and it's also the fallback `/api/reports`
-itself falls back to when called with no `leis` query parameter (e.g.
-hitting the API directly).
+## Quick start
 
-### Features beyond the basic list
+```
+npm install
+npm start
+```
 
-- **New-report highlighting**: reports that appeared since your last visit
-  get a "NEW" badge and a left-border highlight. Tracked via a set of seen
-  report IDs in `localStorage` (`SEEN_KEY` in `app.js`) — the very first
-  load establishes a baseline silently (nothing is flagged "new" the first
-  time you ever see it), and every load after that only flags genuinely new
-  items.
-- **Cache visibility**: the status line shows a "refreshed at HH:MM:SS" time
-  and, when applicable, how many of your watched companies were served from
-  the in-memory NSM cache (see below) rather than freshly fetched.
-- **Download CSV**: exports the currently-displayed report list (company,
-  title, category, date, link) as a CSV file — a quick audit trail outside
-  the browser.
-- **RSS feed**: the "RSS feed" link points at `/api/feed` with your current
-  watchlist/time-period/category settings baked in (as an encrypted token
-  when `VIEW_TOKEN_SECRET` is set — see "Encrypted view links" — otherwise
-  as readable query params) — paste
-  that URL into any feed reader to get "new report" notifications without
-  this app needing to run its own email/push pipeline. See `lib/buildFeed.js`.
-- **Filing calendar**: the floating calendar button (bottom-right) opens a
-  month grid superimposing recent filings and estimated Half-year/Annual due
-  dates for a user-editable subset of your watchlist and report types
-  (independent of the main list's own settings) — see `app.js`'s
-  `openCalendarOverlay()`. Its "Add to Calendar" link is a subscribable
-  `.ics` feed (same `v`-token/readable-params handling as the RSS feed
-  above) for the trusts/categories currently ticked, so the same filings and
-  due-date estimates show up in Google/Outlook/Apple Calendar too — see
-  `lib/buildIcs.js` and `/api/calendar.ics`.
-- **Per-company filing history**: the clock icon next to each company in the
-  sidebar opens a modal showing that company's full filing history for the
-  last 365 days (every item NSM returns, not just ones matching your current
-  category filter) — useful for "did I actually miss anything" checks
-  without fiddling with the time-period dropdown.
-- **Auto-refresh + browser notifications**: the "Auto-refresh" setting
-  polls `/api/reports` on an interval (5/15/30 minutes) via `setInterval`
-  while the tab stays open. Turning it on requests browser notification
-  permission; if granted, a newly-seen report triggers an OS notification
-  **only while the tab is in the background** — a foreground tab already
-  shows the "NEW" badge, so a popup on top of that would be redundant. This
-  is plain browser `Notification`, not push: it stops working the moment
-  the tab or browser is closed (see "Known limitations").
-- **Filter and sort**: a text box above the report list filters by company
-  or title client-side (no re-fetch), and a sort dropdown reorders by date
-  or company name (persisted in `localStorage`). Both act purely on
-  `lastReports`, the same in-memory list the CSV export reads from.
-- **Manual theme toggle**: Auto/Light/Dark in the header, persisted in
-  `localStorage` and applied via a `data-theme` attribute that overrides the
-  `prefers-color-scheme` media query the app otherwise follows.
-- **Export/import your watchlist**: "Export list" downloads your companies
+Then open <http://localhost:3000>. No `.env` file is needed to run the core
+app — see `.env.example` for every optional variable, all of which unlock
+one specific feature and are otherwise safely left unset.
+
+`config/watchlist.js`'s companies are merged into the browser's watchlist on
+**every** page load (via `/api/watchlist`, see `initWatchlist()` in
+`app.js`), not just the first, so they're always present at startup.
+Removing one of the defaults via the page only lasts until the next reload
+— they're added back in — but companies you add beyond the defaults are
+untouched and persist normally. The watchlist otherwise lives in that
+browser's `localStorage`, unless you've enabled the [shared
+watchlist](#the-shared-watchlist).
+
+## Two ways to run this
+
+This app can run two different ways, and they don't have the same features:
+
+1. **`server.js`** — a plain, persistent Node process. This is what runs
+   locally (`npm start`), on **Render**, on **Northflank**, and in the
+   **Docker** image. Because the process stays alive between requests, it
+   can run a background loop and hold a database connection pool — so this
+   is the only way to get a **shared watchlist**, **shared "seen"
+   tracking**, **automatic email digests**, **push notifications**, and
+   **Gilt Ladder**.
+2. **Vercel serverless functions** (`api/*.js`) — each request gets its own
+   short-lived function invocation with nothing persisted between calls.
+   This gets you the core report list, the RSS feed, manual "Send
+   Notification" emails, and encrypted view links — but not any of the
+   features above, since none of them fit a stateless, per-request
+   execution model. There's also no Gilt Ladder route on Vercel.
+
+If you want the full feature set, deploy `server.js` somewhere that keeps a
+process running (Render, Northflank, your own Docker host) rather than to
+Vercel.
+
+## Using the app
+
+### The watchlist and search settings
+
+Add a company by its **LEI** (Legal Entity Identifier, a 20-character
+code) — the NSM has no ISIN or ticker field at all, only LEI and company
+name, confirmed from a real search export. If you only know a company's
+ISIN or name, look up its LEI at
+[search.gleif.org](https://search.gleif.org/).
+
+Under "Search settings", choose a **time period** (24 hours to 90 days) and
+the **report types** to match: checkboxes for the four confirmed category
+names, plus an "Other report types" field for anything not listed
+(comma-separated, matched exactly against the filing's category — not a
+substring match, so `Half-year` alone won't match `"Half-year Financial
+Report"`). Clearing every checkbox and hitting Apply falls back to
+`"Half-year Financial Report, Annual Financial Report"` rather than
+matching nothing. These settings are saved to `localStorage` and sent to
+`/api/reports` as `days` and `categories` query params.
+
+### The report list
+
+- **New-report highlighting** — a report that's appeared since your last
+  visit gets a "NEW" badge and a left-border highlight. Tracked as a set of
+  seen report keys: per-browser in `localStorage` by default (`SEEN_KEY` in
+  `app.js`, capped at the most recent 1000 entries), or shared across every
+  visitor when [shared "seen" tracking](#shared-seen-tracking) is enabled.
+  Either way, the very first load establishes a baseline silently — nothing
+  is flagged "new" the first time you ever see it.
+- **Cache visibility** — the status line shows a "refreshed at HH:MM:SS"
+  time and, when applicable, how many of your watched companies were served
+  from the [NSM result cache](#the-persistent-nsm-cache) rather than
+  freshly fetched.
+- **Download CSV** — exports the currently-displayed report list (company,
+  title, category, date, link) as a CSV file.
+- **Filter and sort** — a text box above the report list filters by company
+  or title client-side (no re-fetch); a dropdown reorders by date or company
+  name (persisted in `localStorage`). Both act purely on the in-memory list
+  the CSV export also reads from.
+- **Auto-refresh and in-tab notifications** — polls `/api/reports` on an
+  interval (5/15/30 minutes) via `setInterval` while the tab is open.
+  Turning it on requests browser notification permission; if granted, a
+  newly-seen report triggers an OS notification **only while the tab is in
+  the background** (a foreground tab already shows the "NEW" badge). This is
+  plain browser `Notification`, not push — it stops the moment the tab or
+  browser closes. See [Push notifications](#push-notifications) for the
+  alternative that doesn't.
+- **Per-company filing history** — the clock icon next to each watched
+  company opens a modal showing its full filing history for the last 365
+  days (every item NSM returns for it, not just ones matching your current
+  category filter).
+- **Manual theme toggle** — Auto/Light/Dark, persisted in `localStorage`,
+  overriding the `prefers-color-scheme` media query the app otherwise
+  follows.
+- **Export/import your watchlist** — "Export list" downloads your companies
   as JSON; "Import list" reads one back in, merging new entries and skipping
-  ones you already have (by LEI) or that aren't validly formed — the fix for
-  the fact that the watchlist otherwise lives only in one browser's
-  `localStorage` with no backup.
-- **Shareable URL**: the address bar always reflects your current
-  companies/time-period/categories after a load (via
-  `history.replaceState`, so it doesn't spam browser history) — copy it to
-  bookmark or share a specific view. That's a single encrypted `v` param
-  when `VIEW_TOKEN_SECRET` is set (see "Encrypted view links"), otherwise
-  readable `leis`/`days`/`categories` params. Opening either kind of link
-  **only ever adds** those companies to your watchlist
-  (or adopts the days/categories as your active settings) — it never removes
-  or replaces anything already saved, so a shared link can't clobber your
-  list even if it names totally different companies.
-- **Per-report email notification**: a "Send Notification" button on each
-  report emails a summary of it on click — see "Email notifications" below.
-- **Sector/portfolio grouping**: tag each company with a free-text group
-  (e.g. "Income trusts", "Client A") in Edit companies, then filter the main
-  report list to one group via the "Group" dropdown above it — see "Sector/
-  portfolio grouping and watchlist views" below.
-- **Multiple watchlist views**: save the current group filter, time period,
-  report types, and keyword as a named "view" (Views panel in the sidebar),
-  and switch between saved views instead of re-entering settings each time —
-  see the same section below.
-- **Real push notifications**: a "Push" button in the header turns on
-  browser/OS push notifications for this browser — unlike auto-refresh's
-  in-tab notifications, these keep arriving with the tab (or the whole
-  browser) closed. See "Push notifications" below.
+  ones you already have (by LEI) or that aren't validly formed.
 
-### Why LEI, not ISIN or ticker
+### The filing calendar and estimated due dates
 
-The NSM has no ISIN field at all — filings are indexed by **LEI** (Legal
-Entity Identifier, a 20-character code) and company name, confirmed from a
-real search export. Add a company via the main form using its LEI (look one
-up at [search.gleif.org](https://search.gleif.org/) if you only know its
-ISIN or name).
+The floating calendar button (bottom-right) opens a month grid
+superimposing recent filings and **estimated** Half-year/Annual due dates,
+for a user-editable subset of your watchlist and report types independent
+of the main list's own settings (`app.js`'s `openCalendarOverlay()`).
 
-### Sector/portfolio grouping and watchlist views
+The estimate comes from `lib/dueDates.js`: this app has no visibility into
+any company's actual financial year-end, only when it last filed a
+Half-year or Annual report, so a due date is inferred from the FCA's
+Disclosure Guidance and Transparency Rules deadlines (annual within 4
+months of year-end, half-yearly within 3 months of period-end) applied to
+that company's own recurring cycle. A company with no prior filing of that
+type is flagged `unknown` rather than guessed at; otherwise it's `ok`,
+`due-soon` (within 30 days of the estimated deadline), or `overdue`. This is
+always surfaced as an estimate, never a claimed known deadline.
+
+The calendar's "Add to Calendar" link is a subscribable **`.ics` feed**
+(`lib/buildIcs.js`, served at `/api/calendar.ics`) carrying the same
+filings and due-date estimates as all-day events, so they show up
+alongside everything else in Google/Outlook/Apple Calendar too, on that
+app's own polling schedule rather than needing this site open. It uses the
+same `v`-token/readable-params handling as the RSS feed below.
+
+### Sector/portfolio grouping and saved views
 
 Each company can be tagged with a free-text **group** (e.g. "Income
-trusts", "Client A", "Growth") from the Edit companies overlay — a plain
-text field next to its name, with autocomplete against groups already in
-use so retyping one is a matter of picking it from the list rather than
-remembering the exact spelling. A company with no group set shows up under
-"Ungrouped" wherever groups are listed. This is purely a label on the one
-shared watchlist, not a separate list of companies — renaming a company or
-moving it between groups is a single edit, immediately reflected wherever
-that group is used.
+trusts", "Client A", "Growth") from the Edit companies overlay, with
+autocomplete against groups already in use. A company with no group set
+shows up under "Ungrouped" wherever groups are listed. This is a label on
+the one watchlist, not a separate list — renaming a company or moving it
+between groups is a single edit, reflected everywhere that group is used.
+When the [shared watchlist](#the-shared-watchlist) is enabled, a company's
+group is part of its shared row, visible to every visitor; otherwise it
+lives alongside the rest of that browser's `localStorage` watchlist.
 
-The main report list's **Group** dropdown (next to the text filter above
-the table) filters to one group (or "Ungrouped", or "All groups") — purely
-client-side over whatever's already loaded, the same way the text filter
-works.
+The main report list's **Group** dropdown filters to one group (or
+"Ungrouped", or "All groups") — purely client-side over whatever's already
+loaded, the same way the text filter works.
 
-**Views** (the "Views" panel in the sidebar, below Search settings) are
-named, saved combinations of **group filter + time period + report types +
-keyword** — not a separate company list. Save the current combination as a
-new view, switch between saved views from the dropdown, update a view's
-saved settings to match whatever's currently applied, or delete one.
-Selecting a view applies its settings and reloads the report list; picking
-"— All (no view) —" goes back to whatever the group filter/Search
-settings/keyword are set to directly. Views live in this browser's
-`localStorage` only (like Search settings/theme/sort), the same as every
-other per-browser preference in this app — they are not shared across
-browsers/devices even when the watchlist itself is (`DATABASE_URL` set),
-and they reference groups by name, so renaming or deleting the only group a
-view filters to leaves that view matching nothing until it's pointed at a
-different group.
+**Views** (the "Views" panel in the sidebar) are named, saved combinations
+of **group filter + time period + report types + keyword** — not a
+separate company list. Save the current combination, switch between saved
+views, update one to match the currently-applied settings, or delete it.
+Views live in `localStorage` only, **even when the watchlist itself is
+shared** — they're per-browser, and reference groups by name, so renaming
+or deleting the only group a view filters to leaves that view matching
+nothing until it's repointed.
 
-### Email notifications
+### Shareable links, the RSS feed, and the .ics feed
+
+The address bar always reflects your current companies/time-period/
+categories after a load (via `history.replaceState`, so it doesn't spam
+browser history) — copy it to bookmark or share a specific view. Opening
+either kind of link **only ever adds** those companies to your watchlist
+(or adopts the days/categories as your active settings) — it never removes
+or replaces anything already saved.
+
+The "RSS feed" link points at `/api/feed` with your current watchlist/
+time-period/category settings baked in — paste it into any feed reader to
+get "new report" notifications without this app needing to run its own
+pipeline (`lib/buildFeed.js`).
+
+By default both kinds of link carry your companies and settings as
+readable query params (`?leis=…&days=7&categories=…`). See [Encrypted view
+links](#encrypted-view-links) to replace that with a single opaque token.
+
+## Notifications
+
+There are three separate ways this app can tell you about a report, each
+with its own requirements:
+
+| | Fires | Needs | Works with the tab/browser closed? |
+|---|---|---|---|
+| [Send Notification](#manual-the-send-notification-button) | On click, for one report | `RESEND_API_KEY`, `NOTIFY_EMAIL_FROM` | n/a (manual) |
+| [Automatic email digests](#automatic-email-digests) | On a schedule you set | The above, plus `DATABASE_URL` | Yes — `server.js` only |
+| [Push notifications](#push-notifications) | The moment something new matches | `DATABASE_URL`, VAPID keys | Yes — `server.js` only |
+| Auto-refresh (see [above](#the-report-list)) | While polling | Nothing | No — stops when the tab closes |
+
+### Manual: the Send Notification button
 
 Each report in the list has a **Send Notification** button that emails a
-summary of that report (company, title, type, publish date, link) on click,
-with the linked document attached as a PDF when the report has one. This is
-the manual, one-off path — see "Automatic email digests" below for
-subscriptions that send on a schedule without anyone clicking anything.
+summary of it (company, title, type, publish date, link) on click, with the
+linked document attached as a PDF when the report has one.
 
 The attachment uses Resend's `path` attachment option — Resend fetches the
-document itself server-side from the report's `url` (NSM's document links
-are public, no auth needed), rather than this app downloading and
-re-uploading it. Filename is taken from the URL when it looks like a real
-filename, otherwise falls back to `report.pdf` (`filenameFromUrl()` in
-`lib/sendNotification.js`). Resend caps attachments at 40MB per email; what
-happens for an oversized or unreachable document (the whole send fails, or
-the attachment is silently dropped) isn't confirmed from this environment —
-first real oversized/broken link is the test.
+document itself server-side from the report's `url`, rather than this app
+downloading and re-uploading it. Filename is taken from the URL when it
+looks like a real filename, otherwise falls back to `report.pdf`. Resend
+caps attachments at 40MB per email; what happens for an oversized or
+unreachable document isn't confirmed from a sandboxed environment with no
+network access — treat the first real oversized/broken link as the test.
 
 Sending goes through the [Resend](https://resend.com) API via their
-official Node SDK (`lib/sendNotification.js`, `/api/notify`), not SMTP. It's
-split into two halves with different requirements:
+official Node SDK (`lib/sendNotification.js`, `/api/notify`), not SMTP:
 
-- **Sending config (server-side, required):** `RESEND_API_KEY`,
-  `NOTIFY_EMAIL_FROM` — see `.env.example`. These are secrets, so they're
-  only ever set as environment variables on whichever platform you deploy to
-  (or your shell for local dev) — there's no UI for them, and nothing is
-  hardcoded or committed to the repo. If either is missing, clicking the
-  button shows an error naming which one, rather than silently failing.
-- **Recipient address:** the first time you click Send Notification, an
-  overlay asks for the email that should receive notifications and saves it
-  to that browser's `localStorage` — it's then sent as `to` on every subsequent notify request
-  from that browser. **That per-browser recipient is only honoured when
-  `APP_PASSWORD` is set** (see "Authentication") — otherwise anyone with the
-  URL could use `/api/notify` to send mail from your verified domain to any
-  address. Without `APP_PASSWORD`, emails only ever go to the server-side
+- **Server-side config (required)**: `RESEND_API_KEY`, `NOTIFY_EMAIL_FROM`.
+  If either is missing, clicking the button shows an error naming which
+  one, rather than failing silently.
+- **Recipient**: the first click opens an overlay asking for the email that
+  should receive notifications, saved to that browser's `localStorage` and
+  sent as `to` on every request. **That per-browser recipient is only
+  honoured when `APP_PASSWORD` is set** — otherwise anyone with the URL
+  could use `/api/notify` to send mail from your verified domain to any
+  address. Without `APP_PASSWORD`, mail only ever goes to the server-side
   `NOTIFY_EMAIL_TO` (required in that case), and a request naming any other
-  recipient is refused. With `APP_PASSWORD` set, `NOTIFY_EMAIL_TO` is
-  optional and only a fallback for a request that doesn't supply its own
-  `to`.
+  recipient is refused. With `APP_PASSWORD`, `NOTIFY_EMAIL_TO` becomes an
+  optional fallback for a request that doesn't supply its own `to`.
 
-This hasn't been exercised against the real Resend API from this environment
-(no network access here to verify it end-to-end) — the first real click
-after you configure credentials is effectively the integration test.
+**Setup**: sign up at [resend.com](https://resend.com) (free tier: 100
+emails/day, 3,000/month). For a `from` address, either use
+`onboarding@resend.dev` (Resend's shared sandbox — only delivers to the
+email you signed up with, fine for testing) or verify your own domain and
+use any address on it. Create an API key (Sending access is enough), then
+set `RESEND_API_KEY` and `NOTIFY_EMAIL_FROM` as environment variables (or
+[secret files](#deploying)). In the app's Send Notification overlay, set
+the recipient — this needs `APP_PASSWORD`; without it, set `NOTIFY_EMAIL_TO`
+instead and use that same address.
 
-#### Setup
-
-1. Sign up at [resend.com](https://resend.com) — the free tier covers
-   100 emails/day / 3,000/month, comfortably enough for a personal
-   watchlist app.
-2. **Get a `from` address.** Two options:
-   - Fastest to test with: `onboarding@resend.dev`, Resend's shared sandbox
-     sender — no verification needed, but it **only delivers to the email
-     address you signed up to Resend with**, nobody else. Fine for
-     confirming the integration works, not for real use.
-   - For a real recipient: **verify your own domain** (Domains → Add
-     Domain, then add the DNS records Resend gives you) and use any address
-     on it, e.g. `notify@yourdomain.com`.
-3. **Create an API key**: API Keys → Create API Key. "Sending access" is
-   enough; you don't need full account access.
-4. Set `RESEND_API_KEY` (the key from step 3) and `NOTIFY_EMAIL_FROM` (the
-   address from step 2) as environment variables — Render/Northflank
-   (service → Environment) or Vercel (Project Settings → Environment
-   Variables); locally, in your `.env`.
-5. In the app itself, set the recipient (Send Notification overlay) to
-   whichever address should actually receive the notifications —
-   independent of the Resend account, and can
-   be anything as long as you're using a verified domain in step 2 (stays
-   restricted to your own signup address if you used the sandbox sender).
-   This needs `APP_PASSWORD` set; without it, set `NOTIFY_EMAIL_TO` and
-   enter that same address.
-
-#### This deployment's setup
-
-`trusts.tomhyde.co.uk` is verified with Resend (DKIM/SPF/DMARC records
-added, sending enabled) — no longer restricted to the sandbox sender or a
-single recipient. `NOTIFY_EMAIL_FROM` should be set to
-`notify@trusts.tomhyde.co.uk` (as a Northflank secret file at
-`/etc/secrets/NOTIFY_EMAIL_FROM`, per "Secret files instead of secret
-variables" below) alongside `RESEND_API_KEY`. With both set, plus
-`APP_PASSWORD` (e.g. `/etc/secrets/APP_PASSWORD`, which is what enables the
-in-app recipient), the recipient in the app itself can be any address, not
-just the Resend account's own signup email.
+This hasn't been exercised against the real Resend API from a
+network-isolated environment — the first real click after configuring
+credentials is effectively the integration test.
 
 ### Automatic email digests
 
-The **Notifications** button (top-left, next to the title) opens a
-subscription manager, independent of the manual Send Notification flow
-above: each email address gets its own schedule (paused / daily / monthly /
-as they occur), its own matrix of which trusts, and which report types per
-trust, it should be notified about, and an optional **keyword filter**
-(e.g. "delisting", "merger") — a filing mentioning that word is included in
-the digest even for a company/report-type combination the matrix hasn't
-otherwise selected, the same "OR'd with the category match" relationship
-the main report list's own Keyword field has (`lib/fetchReports.js`'s
-`matchesKeyword`). Leave it blank for category/trust matching only, as
-before.
+The **Notifications** button (top-left) opens a subscription manager,
+independent of the manual flow above: each email address gets its own
+schedule, its own matrix of which companies and report types to watch, and
+an optional **keyword filter** (e.g. "delisting", "merger") — a filing
+mentioning that word is included even for a company/type combination the
+matrix hasn't otherwise selected (OR'd with the category match, matching
+the main report list's own Keyword field — see `matchesKeyword` in
+`lib/fetchReports.js`).
 
-- **Daily** and **monthly** send one collated email — everything that
-  matched since the last send — at a GMT time of day you choose per
-  subscription (monthly always fires on the 1st).
+- **Daily** / **Monthly** send one collated email of everything matched
+  since the last send, at a GMT time of day you choose (monthly always
+  fires on the 1st).
 - **As they occur** sends the moment a new Half-year or Annual Financial
-  Report is found for a watched trust — the only two categories with an
-  actual filing deadline worth hearing about immediately (see "Estimated
-  filing due dates" below) — with no fixed heartbeat, and never an empty
-  email. The other four report types aren't offered for this schedule.
+  Report is found for a watched company — the only two categories with an
+  actual filing deadline worth hearing about immediately — with no fixed
+  heartbeat, and never an empty email.
 
-Every digest email's footer links back to the Notifications overlay
-(`${APP_URL}/#notifications`) so adjusting or pausing a subscription never
-requires hunting for the button — set **`APP_URL`** to your deployment's
-own public URL to enable it (omitted otherwise).
+Every digest email's footer links back to the Notifications overlay when
+`APP_URL` is set. A brand-new subscription's first send covers exactly one
+cycle back (not its entire history), so turning one on doesn't dump a
+backlog.
 
-This genuinely runs without a browser tab open: subscriptions live in
-Postgres (`lib/subscriptionStore.js`, `notification_subscriptions` table,
-auto-created on first use) rather than `localStorage`, and `server.js` runs
-a self-rescheduling loop (`runDueDigests()`) that sends whatever's due,
-checking every 5 minutes normally or every minute while any subscription is
-set to "as they occur". Requires:
+This needs `DATABASE_URL` — subscriptions live in Postgres
+(`lib/subscriptionStore.js`), not `localStorage`, because a subscription
+has to survive process restarts and free-tier spin-downs to mean anything
+as "automatic". `server.js` runs a self-rescheduling loop
+(`lib/digestScheduler.js`'s `runDueDigests()`, driven from `server.js`)
+that checks every 5 minutes normally, or every minute while any
+subscription is set to "as they occur" — the same loop also drives [push
+notifications](#push-notifications) and the Gilt Ladder's daily plan
+re-costing, so all three tighten their cadence together. Without
+`DATABASE_URL`, the Notifications overlay explains that a database is
+needed and `/api/subscriptions` is a no-op.
 
-- **`DATABASE_URL`** — see "Persistent cache (Postgres)" below for setup.
-  Without it, the Notifications overlay shows a message explaining that a
-  database is needed, and `/api/subscriptions` is a no-op. This is the one
-  feature in the app that doesn't degrade to a simpler in-memory fallback —
-  a subscription has to survive process restarts and Render free-tier
-  spin-downs to mean anything as "automatic".
-- **`RESEND_API_KEY` / `NOTIFY_EMAIL_FROM`** — same sending config as manual
-  notifications above.
-- Same recipient policy as manual sends: without `APP_PASSWORD`, only the
-  fixed `NOTIFY_EMAIL_TO` address can be subscribed (creating a
-  subscription for any other address is rejected) — otherwise this would be
-  an open relay for recurring, not just one-off, email.
+Same recipient policy as manual sends: without `APP_PASSWORD`, only the
+fixed `NOTIFY_EMAIL_TO` address can be subscribed. This only runs on
+`server.js` (Render/Northflank/local/Docker) — Vercel's serverless
+functions have nothing to run a background loop from.
 
-A brand-new subscription's first send covers exactly one cycle back (a
-"daily" or "as they occur" subscription's first email covers the last 24h,
-"monthly" the last 30 days) rather than its entire history, so turning one
-on doesn't suddenly dump a backlog on someone. Only relevant on
-Render/Northflank/local (where
-`server.js` is a long-running process) — the Vercel deployment's `api/*.js`
-functions are serverless with nothing to run a background loop, so
-automatic digests don't fire there without separately configuring Vercel
-Cron to hit a due-check endpoint (not currently wired up).
+### Push notifications
 
-## Push notifications
-
-The **Push** button in the header (next to Diagnostics) turns on real
-browser/OS push notifications for that browser — the actual fix for the
-limitation the rest of this README calls out repeatedly: auto-refresh's
-own in-tab notifications (`notifyNewReports()` in `app.js`) only fire while
-that tab is open, because they're the plain `Notification` API with
-nothing behind them once the tab or browser closes. Push instead goes
-through a service worker (`sw.js`) and the browser vendor's own push
-service (the same mechanism most installed web apps use for notifications),
-so it keeps working with this site closed entirely — the only feature in
-this app that does.
+The **Push** button (header, next to Diagnostics) turns on real
+browser/OS push notifications — the actual fix for auto-refresh's
+tab-must-stay-open limitation. It goes through a service worker (`sw.js`)
+and the browser vendor's own push service, so it keeps working with this
+site closed entirely.
 
 - **What it notifies for**: whichever companies are currently enabled in
-  your watchlist, and the current Search settings' report types/keyword —
-  the same criteria the main report list itself uses, not a separate
-  picker. Turning Push on takes a snapshot of those; adding/removing a
-  company, or changing categories/keyword and hitting Apply, re-syncs an
-  already-active subscription automatically (`maybeSyncPushSubscription()`
-  in `app.js`) so it doesn't quietly fall out of date. It does **not**
-  follow the Group filter or a saved view — those affect what the *page*
-  displays, not what's pushed.
-- **Setup**: needs `DATABASE_URL` (subscriptions are stored in Postgres,
-  the same database as automatic email digests — see "Persistent cache
-  (Postgres)"/"Automatic email digests" above) plus a VAPID key pair
-  (`VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`), which identifies this
-  deployment to push services so they know a delivery genuinely came from
-  it. Generate one with:
+  your watchlist, and the current Search settings' report types/keyword.
+  Turning Push on snapshots those; changing your watchlist or settings
+  re-syncs an already-active subscription automatically
+  (`maybeSyncPushSubscription()` in `app.js`). It does **not** follow the
+  Group filter or a saved view.
+- **Setup**: needs `DATABASE_URL` (subscriptions stored in Postgres, same
+  database as digests — see `lib/pushStore.js`) plus a VAPID key pair:
   ```
   npx web-push generate-vapid-keys
   ```
-  and set both as environment variables (or secret files — see "Secret
-  files instead of secret variables" below). Optionally also set
-  `VAPID_SUBJECT` to a `mailto:`/`https:` URI a push service could use to
-  reach this deployment's operator (required by the VAPID spec, never shown
-  to a subscriber) — defaults to a placeholder if unset. Without both keys
-  set, the Push button never appears, same "missing config just disables
-  the feature" pattern as email notifications.
-- **How it's checked**: `server.js`'s existing digest-scheduler loop
-  (`lib/digestScheduler.js`'s `runDuePush()`) checks every push
-  subscription on the same tick as due email digests — unlike email, a
-  push subscription has no schedule of its own to be "due" against, so
-  every one is checked every tick, and any push subscription existing at
-  all forces the loop's fastest cadence (the same one "as they occur" email
-  subscriptions already use). Only relevant on Render/Northflank/local
-  (`server.js` staying alive between requests) — like automatic email
-  digests, this does not run on Vercel's serverless `api/*.js` functions
-  without separately configuring Vercel Cron.
-- **A subscription that goes stale** (permission revoked, browser site data
-  cleared, the underlying push endpoint expired) is detected the next time
-  a push actually fails to deliver with a 404/410 from the push service
-  (`lib/webPush.js`'s `sendPush()`) and removed from the database
-  automatically (`runDuePush()`), rather than retried forever.
+  Set `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`. Without both, the Push
+  button never appears. `VAPID_SUBJECT` (a `mailto:`/`https:` contact URI,
+  required by the VAPID spec, never shown to a subscriber) defaults to a
+  placeholder if unset.
+- **How it's checked**: the same digest-scheduler loop checks every push
+  subscription on every tick, since a push subscription has no schedule of
+  its own to be "due" against — any push subscription existing at all
+  forces the loop's fastest cadence.
+- A subscription that goes stale (permission revoked, site data cleared,
+  the push endpoint expired) is detected the next time a push actually
+  fails to deliver with a 404/410 (`lib/webPush.js`) and removed
+  automatically, rather than retried forever.
+
+Only relevant on `server.js` deployments, same as automatic digests.
 
 ## Authentication
 
 By default the whole app — every page and API route, including
-`/api/notify` — is open to anyone with the URL, same as before (though
-`/api/notify` then only sends to `NOTIFY_EMAIL_TO` — see "Email
-notifications"). Set
-`APP_PASSWORD` to require an HTTP Basic Auth login (the browser's own
-username/password popup, no custom login page) before anything loads.
-Username defaults to `admin`; set `APP_USERNAME` to change it.
+`/api/notify` — is open to anyone with the URL. Set `APP_PASSWORD` to
+require an HTTP Basic Auth login (the browser's native prompt) before
+anything loads. Username defaults to `admin`; set `APP_USERNAME` to
+change it.
 
-This is enforced on every deployment method:
+Enforced on every deployment method:
 
-- **server.js** (local dev, Render, Northflank) checks it itself, on every
-  request, before any routing — see `lib/basicAuth.js`.
-- **Vercel** uses `middleware.js` at the repo root (Vercel Edge Middleware),
-  which runs before both the static files and every `api/*.js` function.
-  It's a separate, more restricted runtime from `server.js`'s plain Node
-  process (no `Buffer`, no Node `crypto`, no filesystem), so it
-  re-implements the same check with only Web-standard APIs (`atob`,
-  `TextDecoder`, `crypto.subtle`) rather than importing `lib/basicAuth.js`
-  — keep the two in sync if this logic ever changes.
+- **`server.js`** checks it on every request, before any routing
+  (`lib/basicAuth.js`).
+- **Vercel** uses `middleware.js` at the repo root (Edge Middleware), which
+  runs before both the static files and every `api/*.js` function. Edge
+  Runtime is a separate, more restricted runtime (no `Buffer`, no Node
+  `crypto`, no filesystem), so it re-implements the same check with only
+  Web-standard APIs — keep the two in sync if this logic ever changes.
 
 Both compare credentials as SHA-256 digests in constant time, so response
 timing doesn't reveal how close a guess was. `/api/notify` also rejects any
 POST whose `Content-Type` isn't `application/json`: browsers resend cached
-Basic Auth credentials automatically, so without that check another website
-could make a logged-in visitor's browser submit a hidden form that sends an
-email. A JSON content type forces a CORS preflight, which this app never
-approves.
+Basic Auth credentials automatically, so without that check a hidden
+cross-site form could make a logged-in visitor's browser send email on
+their behalf. A JSON content type forces a CORS preflight, which this app
+never approves.
 
-Set `APP_USERNAME`/`APP_PASSWORD` as environment variables the same way as
-any other secret in this project (or as secret files — see "Secret files
-instead of secret variables" below). Was added specifically to stop an
-anonymous visitor from triggering the "Send Notification" button (which
-sends real email from this deployment's verified domain) — protecting the
-whole app was simpler and more robust than gating that one endpoint alone.
+Was added specifically to stop an anonymous visitor from triggering "Send
+Notification" (which sends real email from this deployment's verified
+domain) — protecting the whole app was simpler and more robust than gating
+that one endpoint alone.
 
 ## Encrypted view links
 
-By default, shareable links, the RSS feed URL, and the filing calendar's
-`.ics` feed URL carry your companies and settings as readable query params
-(`?leis=…&days=7&categories=…`). Anyone who sees the URL can read them,
-including through browser history, your hosting provider's request logs,
-screenshots, and link previews in chat apps. Set `VIEW_TOKEN_SECRET` to
-replace them with a single encrypted `?v=<token>` param. The address bar,
-the RSS feed link, the "Add to Calendar" link, and the app's own
-`/api/reports` requests all switch to it.
+By default, shareable links, the RSS feed URL, and the `.ics` calendar feed
+URL carry your companies and settings as readable query params. Anyone who
+sees the URL can read them — including through browser history, hosting
+request logs, and link previews. Set `VIEW_TOKEN_SECRET` (at least 32
+characters, e.g. `openssl rand -base64 32`) to replace them with a single
+encrypted `?v=<token>` param instead.
 
 - **How it works** (`lib/viewToken.js`, `/api/view`): the browser POSTs its
-  current view to `/api/view`, and the server returns it compressed and
-  encrypted with AES-256-GCM, under a key derived from `VIEW_TOKEN_SECRET`.
-  The key never leaves the server. Opening a link sends the token back to
-  `/api/view` to decrypt, and `/api/reports`/`/api/feed`/`/api/calendar.ics`
-  accept `v` directly. An edited or truncated token is rejected rather than
-  opening a different view.
-- **What it doesn't do:** anyone who opens a link still sees that view. The
-  server decrypts it for them, and opening it adds its companies to their
-  watchlist as before, so `APP_PASSWORD` is still what controls access. A
-  token's length also hints at roughly how many companies it holds.
-- **The secret** must be at least 32 characters (e.g. the output of
-  `openssl rand -base64 32`). Set it like any other secret, as an env var or
-  a secret file. The Render Blueprint generates one automatically.
-- **Changing the secret breaks every existing encrypted link and RSS feed
-  subscription.** They'll show "Invalid view link" and need re-copying from
-  the app.
-- **Without it**, nothing changes and links stay readable. Readable links
-  (old bookmarks, existing feed subscriptions) also keep working after you
-  enable it, and the address bar switches to the encrypted form on the next
-  load.
+  current view, and the server returns it compressed and encrypted with
+  AES-256-GCM under a key derived (via HKDF) from `VIEW_TOKEN_SECRET`. The
+  key never leaves the server. An edited or truncated token is rejected
+  rather than opening a different view. The keyword field is never part of
+  the encrypted payload — it's a transient search term, not data worth
+  hiding, so it always stays a plain, readable param.
+- **What it doesn't do**: anyone who opens a link still sees that view —
+  `APP_PASSWORD` is what controls actual access, not this. A token's length
+  also hints at roughly how many companies it holds.
+- **Changing the secret breaks every existing encrypted link and RSS/`.ics`
+  subscription** — they'll show "Invalid view link" and need re-copying.
+- **Without it**, nothing changes: links stay readable, and readable links
+  keep working even after you enable it later (the address bar just
+  switches to the encrypted form on the next load).
 
-## Deploying (Vercel)
+## Sharing data across browsers and devices (Postgres)
 
-This repo needs no build step — Vercel's zero-config Node setup serves the
-root static files and auto-detects every file under `api/` (including
-`api/notify.js`) as a serverless function. Just import the repo into
-Vercel — no environment variables required for the base app. Set
-`RESEND_API_KEY`/`NOTIFY_EMAIL_FROM` too (Project Settings → Environment
-Variables) if you want the "Send Notification" button to work — see "Email
-notifications" above.
+Three independent features share the same `DATABASE_URL` — a single
+Postgres database, three separate tables — each answering a different
+question, and each degrading gracefully with a clear explanation when
+`DATABASE_URL` isn't set:
 
-## Deploying (Render)
+| Feature | Table | Falls back to |
+|---|---|---|
+| [NSM cache](#the-persistent-nsm-cache) | `nsm_cache` | An in-memory `Map`, wiped on restart |
+| [Shared watchlist](#the-shared-watchlist) | `watchlist_companies` | That browser's own `localStorage` |
+| [Shared "seen" tracking](#shared-seen-tracking) | `seen_reports` | That browser's own `localStorage` |
 
-`server.js` is a plain persistent Node server (not serverless functions), so
-it maps directly onto a Render **Web Service** — Render doesn't need
-`api/reports.js` at all, since `server.js` already serves `/api/reports`
-itself. `render.yaml` in the repo root is a Blueprint for this: in the
-Render dashboard, **New → Blueprint**, point it at this repo. It builds with
-`npm install` and starts with `npm start`; Render sets `PORT` itself, which
-`server.js` already reads. No environment variables required for the base
-app — the Blueprint prompts for `RESEND_API_KEY`/`NOTIFY_EMAIL_FROM` (see
-"Email notifications" above) only if you want the optional "Send
-Notification" button to work, and for `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`
-(see "Push notifications" above) only if you want the optional "Push"
-button to work; leave any/all of them unset otherwise. `DATABASE_URL` is
-already wired automatically from the Blueprint's own database, so the
-shared watchlist, automatic email digests, and push notifications all use
-the same one.
+Automatic email digests and push notifications also require `DATABASE_URL`,
+but for their own dedicated tables — see [Notifications](#notifications)
+above.
 
-Without the blueprint, the same result comes from **New → Web Service** →
-connect the repo → Build Command `npm install`, Start Command `npm start`.
+### The persistent NSM cache
 
-## Deploying (Northflank)
+Each watched company's raw NSM results are cached for
+`NSM_CACHE_TTL_MINUTES` (default 10) so a burst of refreshes within that
+window doesn't re-hit NSM for every company again (`fetchForLeiCached()` in
+`lib/fetchReports.js`) — see [the NSM section](#api-integration-notes-the-nsm-search)
+for exactly how. By default this cache is an in-memory `Map`, which is
+wiped every time the process restarts — on Render's **free** web service
+plan, that happens after every idle spin-down, so the next request would
+otherwise hit NSM once per watched company all at once.
 
-`server.js` is the same plain persistent Node server used for Render above,
-so it works the same way here: no serverless function support needed,
-`api/*.js` is ignored, `server.js` alone serves the whole app.
+Setting `DATABASE_URL` makes `lib/cacheStore.js` store the same cache in
+Postgres instead (`nsm_cache`: `lei` primary key, `items` JSONB, `size`,
+`fetched_at`, created automatically). A Postgres outage or bad connection
+string doesn't break report loading — a failed cache read/write is logged
+and treated as a cache miss, falling through to a fresh NSM fetch.
 
-1. **New → Service → Combined service**, connect this GitHub repo.
-2. **Build**: Northflank tries a **Buildpack** first, which should
-   auto-detect this as a standard Node app with no extra config — build
-   command `npm install`, start command `npm start` if it asks. If
-   buildpack detection has trouble (Northflank's own docs list a Dockerfile
-   as the documented fallback), this repo also has a working `Dockerfile`
-   — choose **Dockerfile** as the build type instead and it picks that up.
-3. **Ports — the one genuinely different step from Render.** Northflank
-   does **not** auto-inject a `PORT` env var the way Render does; you set
-   it yourself (or rely on `server.js`'s own default). Either:
-   - leave `PORT` unset and add a port in the service's **Ports & DNS**
-     settings for **3000**, protocol HTTP, public; or
-   - set `PORT` to whatever value you prefer and match that same number in
-     **Ports & DNS**.
-   Skipping this step is the most likely way a first deploy here goes
-   "build succeeded, site unreachable" — the container runs, nothing routes
-   to it.
-4. No environment variables are required for the base app either way. Add
-   `RESEND_API_KEY`/`NOTIFY_EMAIL_FROM` (service → Environment) if you want
-   the optional "Send Notification" button to work — see "Email
-   notifications" above; add `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` if you
-   want the optional "Push" button to work — see "Push notifications"
-   above; Northflank has no blueprint file to pre-fill any of these like
-   Render's, so set them yourself.
+This is a plain `pg.Pool` connection over TLS with the server's certificate
+verified by default. If your provider's certificate isn't in Node's
+default trust store, set `DATABASE_SSL_CA` to its CA certificate (PEM
+text). As a last resort, `DATABASE_SSL_VERIFY=false` skips verification
+(still encrypted, but open to interception). An `sslmode` in `DATABASE_URL`
+itself overrides both.
 
-### Secret files instead of secret variables
+**Render's free Postgres plan expires and is deleted after 30 days** —
+fine for testing, not a long-term store without a paid plan. This isn't
+wired into `render.yaml` as a Blueprint resource deliberately, so deploying
+the Blueprint never silently provisions a database (and its 30-day clock)
+you didn't ask for.
 
-Some Northflank plans/projects only offer **Secret Files** (mount a file
-into the container), not individual **Secret Variables**. `server.js`
-handles this itself: for `RESEND_API_KEY`, `NOTIFY_EMAIL_FROM`,
-`NOTIFY_EMAIL_TO`, `DATABASE_URL`, `DATABASE_SSL_CA`, `APP_USERNAME`,
-`APP_PASSWORD`, `VIEW_TOKEN_SECRET`, `VAPID_PUBLIC_KEY`,
-`VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT`, if the real environment variable
-isn't set, it falls back to reading a file named exactly after that
-variable under `/etc/secrets` (e.g. `/etc/secrets/RESEND_API_KEY`) and uses
-its trimmed contents as the value — no environment variable needed at all.
+### The shared watchlist
 
-To use this: in Northflank, create a secret file per credential you need,
-with the **mount path set to `/etc/secrets/<VARIABLE_NAME>`** (matching the
-name exactly, no file extension) and the file's **content set to just the
-raw value** (e.g. the file at `/etc/secrets/RESEND_API_KEY` contains only
-`re_your_api_key`, nothing else). A real environment variable, if you're
-later able to set one, always takes priority over the file for the same
-name. Override the base directory with `SECRET_FILE_DIR` if you'd rather
-mount your files somewhere other than `/etc/secrets`.
+Without `DATABASE_URL`, the watchlist (companies, names, enabled state,
+group tags) lives entirely in that one browser's `localStorage` — nobody
+else sees your edits, and a cleared browser loses them. Setting
+`DATABASE_URL` makes it a single shared list instead
+(`lib/watchlistStore.js`, table `watchlist_companies`), visible and
+editable from any browser or device pointed at the same deployment:
 
-### Optional: Postgres addon for the persistent cache
+- `GET /api/companies` returns the shared list; `PUT /api/companies`
+  replaces it wholesale with whatever the client currently has, matching
+  the frontend's own "mutate the whole list locally, then persist all of
+  it" pattern for every kind of edit (add, rename, toggle, remove, bulk
+  import).
+- `app.js` reads `enabled: false` from `GET /api/companies` on a deployment
+  with no database and falls back to `localStorage` itself — the shared
+  watchlist is either fully on or fully off, never partially degraded.
+- There's deliberately no in-memory fallback: a "shared" watchlist that
+  resets on every restart would be worse than no sharing at all.
+- `config/watchlist.js`'s defaults are unaffected either way — they're
+  merged into whichever watchlist (shared or local) is active on every
+  load, same as always.
 
-If you also want the Postgres-backed NSM cache (see "Persistent cache
-(Postgres)" above) rather than Render's approach of provisioning one
-separately and copying a connection string by hand, Northflank's own
-Postgres addon is more directly integrated: **Addons → PostgreSQL**, then
-link its generated `DATABASE_URL` secret to the service as an environment
-variable. Northflank's addon already names it `DATABASE_URL` in exactly
-the `postgresql://user:pass@host:5432/dbname` shape `lib/cacheStore.js`
-expects — no reformatting needed, unlike copying Render's connection
-string by hand.
+### Shared "seen" tracking
 
-**This wasn't build-tested in this environment** — the sandbox this was
-written in blocks Docker Hub registry pulls (even through its own network
-proxy), so the `Dockerfile` above couldn't actually be built and run here.
-It follows the standard, widely-used Node Docker pattern (and matches
-Northflank's own documented example closely), but the same "first real
-deploy is the real test" caveat applies as everywhere else undocumented or
-unverifiable from this sandbox has come up in this project.
+The "NEW" badge (see [The report list](#the-report-list)) is normally
+per-browser: what counts as "seen" lives in that browser's `localStorage`
+only. Setting `DATABASE_URL` makes it shared instead
+(`lib/seenStore.js`, table `seen_reports`) — a report one visitor has
+already looked at stops showing "NEW" for everyone on the same
+deployment, which matters once the watchlist itself is shared and more
+than one person is actually looking at the same list.
 
-## API integration notes
+- `GET /api/seen` returns the shared set of seen report keys; `POST
+  /api/seen` marks more of them seen — additively, since the client only
+  ever reports what's currently on screen, never an accumulated history.
+- Rows older than 400 days are pruned automatically on a small fraction of
+  writes, rather than needing a separate scheduled cleanup job.
+- Same all-or-nothing behaviour as the shared watchlist: `app.js` falls
+  back to `localStorage` itself when this is disabled, and there's no
+  in-memory fallback when `DATABASE_URL` is unset — a "shared" seen-state
+  that resets on every restart would just relabel things "NEW" again for
+  everyone at once.
 
-### NSM search (reports)
+## Configuration reference
+
+Every variable below is optional; the app runs with none of them set. Each
+one only unlocks the specific feature listed — see that feature's own
+section for full setup steps. Any of these can also be provided as a
+**secret file** instead of an environment variable — see
+["Secret files instead of secret variables"](#secret-files-instead-of-secret-variables).
+
+| Variable | Unlocks | Notes |
+|---|---|---|
+| `PORT` | — | Local dev server port. Default `3000`. |
+| `APP_USERNAME`, `APP_PASSWORD` | [Authentication](#authentication) | Username defaults to `admin`. |
+| `VIEW_TOKEN_SECRET` | [Encrypted view links](#encrypted-view-links) | ≥ 32 characters. |
+| `DATABASE_URL` | [Persistent cache, shared watchlist/seen tracking](#sharing-data-across-browsers-and-devices-postgres), [automatic digests](#automatic-email-digests), [push](#push-notifications) | Postgres connection string. |
+| `DATABASE_SSL_CA`, `DATABASE_SSL_VERIFY` | — | Only if your Postgres provider's TLS cert isn't in Node's default trust store. |
+| `NSM_CACHE_TTL_MINUTES` | — | Default `10`; `0` disables caching. |
+| `RESEND_API_KEY`, `NOTIFY_EMAIL_FROM` | [Send Notification](#manual-the-send-notification-button), digests, gilt alerts | Resend account + verified sender. |
+| `NOTIFY_EMAIL_TO` | Email recipient fallback | Required if `APP_PASSWORD` is unset. |
+| `APP_URL` | — | Adds a "manage preferences" link to digest email footers. |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | [Push notifications](#push-notifications) | Generate with `npx web-push generate-vapid-keys`. |
+| `SECRET_FILE_DIR` | — | Default `/etc/secrets`; see [secret files](#secret-files-instead-of-secret-variables). |
+| `GILT_LADDER_DATA_DIR`, `GILT_ALERT_EMAIL`, `GILT_ALERT_THRESHOLD_PERCENT` | Gilt Ladder | See [gilt-ladder/README.md](gilt-ladder/README.md). |
+
+## API integration notes: the NSM search
 
 This is **not a documented public API** — there is no official developer
 API for the NSM. The request shape below was captured by watching the
@@ -594,150 +580,119 @@ Content-Type: application/json
   confirmed from a real capture. Report type is the `type` field — exact
   values `"Half-year Financial Report"` and `"Annual Financial Report"`
   (see `REPORT_TYPES` in `lib/fetchReports.js`) rather than a keyword guess
-  against free text, since we have confirmed real values this time.
+  against free text.
 - `download_link` in the response is a path relative to
-  `https://data.fca.org.uk/artefacts/` (confirmed by comparing a CSV export's
-  full download URL against the API's relative one for the same document).
+  `https://data.fca.org.uk/artefacts/` (confirmed by comparing a CSV
+  export's full download URL against the API's relative one for the same
+  document).
 - The four-element `company_lei` value array (`["", "<LEI>", "disclose_org",
-  "related_org"]`) is used exactly as captured from a real browser request —
-  the leading empty string and the two flag strings are unexplained (there's
-  no documentation to explain them) and kept as-is rather than guessed at.
+  "related_org"]`) is used exactly as captured from a real browser request
+  — the leading empty string and the two flag strings are unexplained
+  (there's no documentation to explain them) and kept as-is rather than
+  guessed at.
 - No API key, and no documented rate limit — meaning also no documented
-  *allowance*. Keep usage light (this app already does, at one request per
-  company per refresh) and don't assume it can take sustained/bulk traffic.
-- **Each company's raw results are cached** for `NSM_CACHE_TTL_MINUTES`
-  (default 10, `fetchForLeiCached()` in `lib/fetchReports.js`) — a refresh
-  within that window reuses the cached data instead of re-querying NSM, so
-  with a 21-company watchlist a burst of refreshes costs 21 requests once,
-  not 21 every time. Keyed only by LEI, not by the requested time
-  period/report types, since those are both filtered afterwards against the
-  same raw item list; a request needing a longer window than what's cached
-  (a bigger `size`) is treated as a miss and re-fetched. In-memory by
-  default (zero setup, but wiped on process restart); set `DATABASE_URL` to
-  back it with Postgres instead — see "Persistent cache (Postgres)" below.
-  Set `NSM_CACHE_TTL_MINUTES=0` to disable caching entirely.
-
-### Persistent cache (Postgres)
-
-By default the NSM cache above lives in memory, which is wiped every time
-the Node process restarts. On Render's **free** web service plan that
-happens after every idle spin-down — the next request cold-starts a fresh
-process with an empty cache, and would otherwise hit NSM once per watched
-company all at once, exactly the burst the cache exists to avoid.
-
-Setting `DATABASE_URL` makes `lib/cacheStore.js` store that same cache in
-Postgres instead (a single `nsm_cache` table: `lei` primary key, `items`
-JSONB, `size`, `fetched_at` — created automatically on first use). With no
-`DATABASE_URL` set, nothing changes: the app runs exactly as before,
-in-memory, zero setup. A Postgres outage or bad connection string doesn't
-break report loading either — a failed cache read/write is logged and
-treated as a cache miss, falling through to a fresh NSM fetch.
-
-**Setup on Render**: Render dashboard → **New → PostgreSQL**, then copy its
-**Internal Database URL** into your web service's `DATABASE_URL` environment
-variable (same Render region as the web service, so the internal URL is
-reachable). **Know the tradeoff before you provision one**: Render's free
-Postgres plan **expires and is deleted after 30 days** — fine for testing
-this, but not a real long-term store unless you're on a paid database plan.
-This isn't wired into `render.yaml` as a Blueprint resource deliberately,
-so deploying the Blueprint never silently provisions a database (and its
-30-day clock) you didn't ask for.
-
-Anywhere else (Neon, Supabase, your own Postgres, local dev), the same
-`DATABASE_URL` env var works the same way — this is a plain `pg.Pool`
-connection over TLS, **with the server's certificate verified by default**.
-If your provider's certificate isn't signed by a CA in Node's default trust
-store, the cache logs a certificate error and falls back to fresh NSM
-fetches (reports still load). Fix that by setting `DATABASE_SSL_CA` to the
-provider's CA certificate (PEM text, as an env var or secret file). Only as
-a last resort, `DATABASE_SSL_VERIFY=false` skips verification: the
-connection is still encrypted, but anyone who can intercept it could
-impersonate the database. An `sslmode` parameter in `DATABASE_URL` itself
-overrides both settings.
+  *allowance*. Keep usage light and don't assume it can take sustained/bulk
+  traffic.
 - **Batching multiple LEIs into a single request is untested.** The
   `company_lei` value array has only ever been sent/confirmed with one LEI;
-  whether NSM's search accepts several at once (which would cut the
-  21-request refresh down to 1-3) is unconfirmed and not relied on, per the
-  same "verify before building" approach used throughout this integration.
+  whether NSM's search accepts several at once (which would cut a
+  21-company refresh down to 1–3 requests) is unconfirmed and not relied
+  on.
 - A handful of filings come through a different shape (seen once: a "Direct
   Upload" PDF factsheet with `ContentVersionId`/`html_link` fields instead
   of the usual RNS/PRN shape). `normalise()` handles this by only relying on
   fields both shapes share.
-
-### Known limitations
-
-- **CORS headers in the real request (`Origin`/`Referer`) are browser-only
-  concerns** and don't apply to this server-to-server call, but the
-  server-side code sends browser-like headers anyway (`BROWSER_LIKE_HEADERS`
-  in `lib/fetchReports.js`) in case the endpoint also enforces them
-  server-side as informal bot filtering — unconfirmed either way, since it
-  can't be tested from a sandboxed environment with no network access to
-  `data.fca.org.uk`.
-- No pagination: `size` per company scales with the chosen time period
+- **No pagination**: `size` per company scales with the chosen time period
   (`resultsPerCompany()` in `lib/fetchReports.js`, ~15 items/day of
-  headroom, capped at 1000). Fine for a normal company's filing volume (the
-  real capture showed roughly 10-15 items/week for one company), but a
-  company with unusually heavy filing activity in the selected window could
-  still exceed it and silently miss older items.
-- The debug panel ("All items returned in this period") shows every item
-  for every watched company, un-truncated — safe to leave on since it's
-  scoped to your own watchlist rather than a market-wide dump, but a long
-  time period with many watched companies could still make it sizeable.
+  headroom, capped at 1000). Fine for normal filing volume, but an unusually
+  active company in a long window could still exceed it and silently miss
+  older items.
 - **Report-type matching is exact and case-insensitive**, not a substring
-  match — typing `Half-year` alone won't match `"Half-year Financial
-  Report"`. Type (or paste) the full category name as it appears in a real
-  filing.
-- A stale browser `localStorage` entry from before the ISIN→LEI switch (an
-  `isin` field instead of `lei`) is silently dropped on load rather than
-  migrated, since there's no way to derive an LEI from an old ISIN entry
-  automatically — see `loadWatchlist()` in `app.js`.
-- **Auto-refresh's own in-tab notifications only run while the tab is
-  open** — that polling loop and its plain-`Notification` popups stop the
-  moment the tab or browser closes. Three alternatives that don't: the RSS
-  feed and the filing calendar's `.ics` feed (both poll on the *reader's*
-  own schedule, not this app's), and the "Push" button (see "Push
-  notifications" above), which is the one option actually delivered by
-  this app itself with nothing open — the other two are also unaffected by
-  the deployment-specific caveats below, since a feed reader/calendar app
-  keeps polling regardless of what this deployment has configured.
-- **Push notifications need both a database and a VAPID key pair
-  configured** (see "Push notifications") — without either, the Push
-  button never appears rather than failing when clicked. Like automatic
-  email digests, the scheduler that actually checks and sends pushes only
-  runs on Render/Northflank/local (`server.js` staying alive between
-  requests), not on Vercel's serverless functions without separately
-  configuring Vercel Cron. A push subscription is also tied to one specific
-  browser profile/installation — clearing that browser's site data (or the
-  OS revoking notification permission) silently ends delivery until Push is
-  turned on again there; there's no cross-device sync of push subscriptions
-  the way the shared watchlist has.
-- **A push subscription mirrors your enabled watchlist and Search
-  settings, not the Group filter or a saved view** — turning Push on
-  notifies for whatever the *unfiltered* active watchlist and current
-  report types/keyword would show, kept in sync automatically as those
-  change (see "Push notifications"), but narrowing the on-screen list to
-  one group or view doesn't narrow what gets pushed.
-- **Sector/portfolio groups and watchlist views are both per-browser**,
-  even when the watchlist itself is shared across visitors
-  (`DATABASE_URL` set — see "The user's actual, editable watchlist" in
-  Project layout below): a company's `group` tag *is* stored server-side
-  alongside the rest of that shared row (`lib/watchlistStore.js`) and so is
-  visible to every visitor, but **views themselves live only in
-  `localStorage`** (see "Sector/portfolio grouping and watchlist views"
-  above) — one browser's saved views are invisible to another browser/
-  device, even one pointed at the same shared watchlist.
-- **The keyword digest filter matches only the filing's title** (NSM's
-  `headline` field, via `lib/fetchReports.js`'s `normalise()`), the same
-  as the main report list's own Keyword field — not the linked document's
-  full text, which this app never downloads or parses.
-- The "seen reports" set behind the NEW badge is capped at the most recent
-  1000 entries (`MAX_SEEN` in `app.js`) and lives in that browser's
-  `localStorage` — clearing site data resets it, which just means the next
-  load re-establishes a fresh baseline (nothing incorrectly flagged, just a
-  one-time loss of "what's new" history).
-- The per-company history modal always requests 365 days for that one LEI,
-  which is `MAX_WINDOW_DAYS` in `lib/fetchReports.js` — it shows everything
-  NSM will return for that window, not literally all-time history.
+  match.
+- CORS headers in the real captured request (`Origin`/`Referer`) are
+  browser-only concerns and don't apply to this server-to-server call, but
+  the server sends browser-like headers anyway (`BROWSER_LIKE_HEADERS` in
+  `lib/fetchReports.js`) in case the endpoint also enforces them
+  server-side as informal bot filtering — unconfirmed either way.
+
+## Deploying
+
+### Deploying (Vercel)
+
+This repo needs no build step — Vercel's zero-config Node setup serves the
+root static files and auto-detects every file under `api/` as a serverless
+function. Just import the repo — no environment variables required for the
+base app. Set `RESEND_API_KEY`/`NOTIFY_EMAIL_FROM` too if you want "Send
+Notification" to work. Remember: this deployment mode gets none of the
+`server.js`-only features — see [Two ways to run this](#two-ways-to-run-this).
+
+### Deploying (Render)
+
+`server.js` maps directly onto a Render **Web Service**. `render.yaml` in
+the repo root is a Blueprint for this: **New → Blueprint**, point it at
+this repo. It builds with `npm install` and starts with `npm start`;
+Render sets `PORT` itself, which `server.js` already reads. The Blueprint
+prompts for `RESEND_API_KEY`/`NOTIFY_EMAIL_FROM` and
+`VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` only if you want those optional
+features — leave them unset otherwise. `DATABASE_URL` is wired
+automatically from the Blueprint's own database, so the persistent cache,
+shared watchlist, shared seen tracking, automatic digests, and push
+notifications all use the same one.
+
+Without the Blueprint: **New → Web Service** → connect the repo → Build
+Command `npm install`, Start Command `npm start`.
+
+### Deploying (Northflank)
+
+`server.js` works the same way here — no serverless function support
+needed, `api/*.js` is ignored.
+
+1. **New → Service → Combined service**, connect this GitHub repo.
+2. **Build**: Northflank's Buildpack should auto-detect this as a standard
+   Node app (build `npm install`, start `npm start`). If detection has
+   trouble, choose **Dockerfile** as the build type instead — this repo has
+   a working one.
+3. **Ports**: Northflank does **not** auto-inject `PORT` the way Render
+   does. Either leave `PORT` unset and add a port for **3000** (HTTP,
+   public) in Ports & DNS, or set `PORT` yourself and match it there.
+   Skipping this is the most likely way a first deploy here ends up "build
+   succeeded, site unreachable."
+4. Add `RESEND_API_KEY`/`NOTIFY_EMAIL_FROM` and/or
+   `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` (service → Environment) for those
+   optional features — there's no Blueprint here to prompt for them.
+
+#### Secret files instead of secret variables
+
+Some Northflank plans/projects only offer **Secret Files** (mounted into
+the container), not individual **Secret Variables**. `server.js` handles
+this itself: for every variable in [Configuration
+reference](#configuration-reference) except `PORT` and `SECRET_FILE_DIR`,
+if the real environment variable isn't set, it falls back to reading a
+file named exactly after that variable under `SECRET_FILE_DIR` (default
+`/etc/secrets`) and uses its trimmed contents as the value.
+
+To use this: create a secret file per credential, with the mount path set
+to `/etc/secrets/<VARIABLE_NAME>` (exact name, no extension) and the
+file's content set to just the raw value. A real environment variable, if
+you're later able to set one, always takes priority over the file for the
+same name.
+
+#### Optional: Postgres addon for the persistent features
+
+If you want any of the `DATABASE_URL`-backed features on Northflank rather
+than provisioning Postgres separately, its own addon is more directly
+integrated than copying Render's connection string by hand: **Addons →
+PostgreSQL**, then link its generated `DATABASE_URL` secret to the service
+as an environment variable. Northflank's addon already names it
+`DATABASE_URL` in exactly the `postgresql://user:pass@host:5432/dbname`
+shape this app expects.
+
+This wasn't build-tested from this environment — the sandbox this was
+written in blocks Docker Hub registry pulls even through its own network
+proxy, so the `Dockerfile` couldn't actually be built and run here. It
+follows the standard, widely-used Node Docker pattern; the same "first
+real deploy is the real test" caveat applies here as everywhere else
+unverifiable from this sandbox.
 
 ## Testing
 
@@ -745,88 +700,137 @@ overrides both settings.
 npm test
 ```
 
-Runs `node --test test/` (Node's built-in test runner - no extra dependency
-needed). Covers the automatic email digest system end to end, including the
-push-notification scheduler added alongside it (both share
-`lib/digestScheduler.js`'s check loop):
+Runs `node --test` over both `test/` and `gilt-ladder/test/` (Node's
+built-in test runner, no extra dependency). The root suite covers the
+automatic email digest system end to end, including the push-notification
+scheduler that shares its check loop:
 
-- `test/digestScheduler.test.js` - the due-check/send loop for both email
-  (`runDueDigests`) and push (`runDuePush`), plus the poll-interval logic
-  (`computePollIntervalMinutes`, including its `hasPush` branch), all
-  against a fake in-memory store and a fake sender. No network, no database.
-- `test/sendDigest.test.js` - digest-window calculation, per-trust/per-category
-  matching (including the keyword-filter OR-relationship added for keyword
-  digest alerts), HTML building, and the recipient security gate
-  (`digestSendAllowed`), all pure functions in `lib/sendDigest.js`.
-- `test/subscriptionsApi.test.js` - the real `/api/subscriptions*` routes in
-  `server.js`, hit as real HTTP requests against a real (in-process) server -
-  only `lib/subscriptionStore.js` is swapped for an in-memory fake, so this
-  never touches Postgres.
-- `test/subscriptionStore.test.js` - real CRUD against Postgres. **Skipped by
-  default.** Set `TEST_DATABASE_URL` to a disposable database to run it:
-  ```
-  TEST_DATABASE_URL=postgres://user:pass@host:5432/dbname npm test
-  ```
-  Deliberately a separate env var from `DATABASE_URL` (which your own shell
-  or `.env` might have set for running the app itself), so this suite can
-  never accidentally run against a real database just because one happens
-  to be configured - only ever the one you explicitly hand it here. It
-  cleans up the rows it creates, but should still only ever point at
-  something disposable, never production.
+- `test/digestScheduler.test.js` — the due-check/send loop for both email
+  (`runDueDigests`) and push (`runDuePush`), plus the poll-interval logic,
+  against a fake in-memory store and a fake sender. No network, no
+  database.
+- `test/sendDigest.test.js` — digest-window calculation, per-company/
+  per-category matching (including the keyword-filter OR-relationship),
+  HTML building, and the recipient security gate, all pure functions in
+  `lib/sendDigest.js`.
+- `test/subscriptionsApi.test.js` — the real `/api/subscriptions*` routes
+  in `server.js`, hit as real HTTP requests against a real in-process
+  server; only `lib/subscriptionStore.js` is swapped for an in-memory fake,
+  so this never touches Postgres.
+- `test/subscriptionStore.test.js` — real CRUD against Postgres.
+  **Skipped by default.** Set `TEST_DATABASE_URL` to a disposable database
+  to run it — deliberately a separate env var from `DATABASE_URL`, so this
+  suite can never accidentally run against a real database just because
+  one happens to be configured for the app itself.
+- `test/fetchReports.test.js`, `test/dueDates.test.js`, `test/buildIcs.test.js`
+  — the NSM caching/delta-fetch logic, the due-date estimator, and the
+  `.ics` feed builder, all as pure functions with no network dependency.
 
-`npm test` also runs `gilt-ladder/test/` - the Gilt Ladder's bond maths,
-calendar, curve parsing, ladder construction, and its mount under
-`/gilt-ladder/`. None of those tests need the network.
+`gilt-ladder/test/` covers the Gilt Ladder's bond maths, calendar, curve
+parsing, ladder construction, and its mount under `/gilt-ladder/` — see
+[gilt-ladder/README.md](gilt-ladder/README.md).
 
-Nothing else in the app (the NSM integration, the frontend, CSV/RSS export,
-manual "Send Notification") has automated coverage yet - this suite is
-scoped specifically to the recurring-digest and push-notification systems.
-`lib/pushStore.js`'s real Postgres CRUD and `lib/webPush.js`'s actual
-delivery through a push service have no automated test of their own (the
-same "first real deploy/click is the real test" caveat as elsewhere in this
-README applies) - only the pure scheduling/filtering logic around them is
-covered here.
+Nothing else in the app (the NSM integration beyond what's unit-tested
+above, the frontend, CSV/RSS/`.ics` export, manual "Send Notification") has
+automated coverage yet — this suite is scoped specifically to the
+recurring-notification systems and the pure logic modules that are cheap
+to test in isolation. `lib/watchlistStore.js`, `lib/seenStore.js`,
+`lib/pushStore.js`'s real Postgres CRUD, `lib/webPush.js`'s actual delivery
+through a push service, and `lib/sendNotification.js`'s send through Resend
+have no automated test of their own — the same "first real deploy/click is
+the real test" caveat as elsewhere in this document applies.
 
 ## Project layout
 
 ```
-index.html, style.css, app.js   Frontend: LEI watchlist manager (localStorage) + reports list
+index.html, style.css, app.js   Frontend: LEI watchlist manager + reports list (localStorage-backed unless the shared features below are enabled)
 api/reports.js                  Vercel serverless function: GET /api/reports
 api/watchlist.js                Vercel serverless function: GET /api/watchlist (seeds a fresh browser)
-api/feed.js                     Vercel serverless function: GET /api/feed (RSS feed of matching reports)
-api/notify.js                   Vercel serverless function: POST /api/notify (email a report - see "Email notifications")
-api/view.js                     Vercel serverless function: POST/GET /api/view (create/open encrypted view links - see "Encrypted view links")
-lib/viewToken.js                AES-256-GCM view tokens for shareable links and /api/reports + /api/feed (shared by api/ and server.js)
-lib/fetchReports.js             NSM search call + filtering logic (shared by api/ and server.js)
-lib/cacheStore.js               Optional Postgres-backed NSM cache (used when DATABASE_URL is set - see README)
-lib/buildFeed.js                Builds the RSS 2.0 XML for /api/feed (shared by api/ and server.js)
-lib/sendNotification.js         Email sending via the Resend API (shared by api/ and server.js)
-lib/basicAuth.js                HTTP Basic Auth check used by server.js (see "Authentication") - Vercel's middleware.js re-implements the same check separately
-lib/watchlistStore.js           Postgres-backed shared company watchlist (DATABASE_URL) - now also stores each company's group tag
-lib/subscriptionStore.js        Postgres-backed automatic email digest subscriptions - now also stores each subscription's keyword filter
-lib/sendDigest.js               Builds/sends one email digest (category + keyword matching, HTML) - server.js only
-lib/digestScheduler.js          Due-check/send loop for both email digests (runDueDigests) and push (runDuePush) - server.js only
-lib/pushStore.js                Postgres-backed Web Push subscriptions (DATABASE_URL) - server.js only, no in-memory fallback (see "Push notifications")
-lib/webPush.js                  Thin VAPID/web-push wrapper - sends one push notification, server.js only
-lib/sendPush.js                 Checks one push subscription's watched companies/categories/keyword for anything new and sends a push if so
-sw.js                            Service worker behind Web Push - handles 'push'/'notificationclick', nothing else (no offline caching)
-middleware.js                   Vercel Edge Middleware - the Vercel-side half of "Authentication", gates every route before it reaches api/ or the static files
-server.js                       Plain Node dev server (static files + /api/reports + /api/watchlist + /api/feed + /api/notify + /api/view + /api/companies + /api/subscriptions + /api/push/*)
-config/watchlist.js             Default company list - seeds a fresh browser, and fallback for /api/reports called with no `leis` param
-Dockerfile, .dockerignore       Fallback build path for Northflank (or anywhere else that wants a container) - see "Deploying (Northflank)"
-gilt-ladder/                    Gilt Ladder, served by server.js at /gilt-ladder/ via gilt-ladder/router.js - self-contained, see gilt-ladder/README.md
+api/feed.js                     Vercel serverless function: GET /api/feed (RSS feed)
+api/notify.js                   Vercel serverless function: POST /api/notify (see "Manual: the Send Notification button")
+api/view.js                     Vercel serverless function: POST/GET /api/view (see "Encrypted view links")
+lib/fetchReports.js             NSM search call + filtering + caching logic (shared by api/ and server.js)
+lib/viewToken.js                AES-256-GCM view tokens for shareable links, the RSS feed, and the .ics feed
+lib/buildFeed.js                Builds the RSS 2.0 XML for /api/feed
+lib/buildIcs.js                 Builds the .ics calendar feed for /api/calendar.ics
+lib/dueDates.js                 Estimated Half-year/Annual due-date logic behind /api/due-dates and the filing calendar
+lib/sendNotification.js         Manual email sending via the Resend API
+lib/cacheStore.js               Optional Postgres-backed NSM cache (see "The persistent NSM cache")
+lib/watchlistStore.js           Optional Postgres-backed shared watchlist (see "The shared watchlist")
+lib/seenStore.js                Optional Postgres-backed shared "seen" tracking (see "Shared 'seen' tracking")
+lib/subscriptionStore.js        Postgres-backed automatic email digest subscriptions
+lib/sendDigest.js               Builds/sends one email digest - server.js only
+lib/digestScheduler.js          Due-check/send loop for both email digests and push - server.js only
+lib/pushStore.js                Postgres-backed Web Push subscriptions - server.js only, no in-memory fallback
+lib/webPush.js                  Thin VAPID/web-push wrapper - sends one push notification
+lib/sendPush.js                 Checks one push subscription for anything new and sends a push if so
+lib/basicAuth.js                HTTP Basic Auth check used by server.js - middleware.js re-implements the same check for Vercel
+sw.js                            Service worker behind Web Push - handles 'push'/'notificationclick', nothing else
+middleware.js                   Vercel Edge Middleware - gates every route before it reaches api/ or the static files
+server.js                       Plain persistent Node server: static files + every /api/* route + the digest/push/gilt-recost scheduler + mounts gilt-ladder/
+config/watchlist.js             Default company list - seeds a fresh browser/shared watchlist, and the fallback for /api/reports called with no leis param
+Dockerfile, .dockerignore       Fallback build path for Northflank (or anywhere else that wants a container)
+gilt-ladder/                    Gilt Ladder, mounted by server.js at /gilt-ladder/ - self-contained, see gilt-ladder/README.md
 ```
 
-Note: `/api/companies`, `/api/subscriptions*`, `/api/due-dates`,
-`/api/calendar.ics`, and `/api/push/*` (sector/portfolio groups, automatic
-email digests + keyword filter, filing due dates, the `.ics` calendar feed,
-and push notifications respectively) only exist on `server.js` - unlike
-`/api/reports`/`/api/feed`/`/api/notify`/`/api/view`, there is no matching
-`api/*.js` file for a Vercel serverless deployment, since each needs either
-a persistent database connection lifecycle or (push/digests) a long-running
-process to schedule checks from, neither of which fits Vercel's per-request
-serverless functions. A Vercel deployment still gets the core report list,
-RSS feed, manual "Send Notification", and encrypted view links - just not
-the shared watchlist, automatic digests, or push notifications. Multiple
-watchlist views are unaffected either way, since they're entirely
-client-side (`localStorage`, no API route at all).
+`/api/due-dates`, `/api/calendar.ics`, `/api/companies`, `/api/seen`,
+`/api/subscriptions*`, and `/api/push/*` only exist on `server.js` — there
+is no matching Vercel serverless function for any of them, since each
+needs either a persistent database connection or a long-running process to
+schedule checks from, neither of which fits Vercel's per-request execution
+model. See [Two ways to run this](#two-ways-to-run-this).
+
+## Known limitations
+
+- **Auto-refresh's own in-tab notifications only run while the tab is
+  open** — see [Notifications](#notifications) for the three alternatives
+  that don't (RSS, the `.ics` feed, and Push).
+- **Push notifications need both a database and a VAPID key pair** —
+  without either, the Push button never appears rather than failing when
+  clicked. Like automatic digests, the scheduler that checks and sends
+  pushes only runs on `server.js` deployments.
+- **A push subscription mirrors your enabled watchlist and Search
+  settings, not the Group filter or a saved view.**
+- **Sector/portfolio groups and watchlist views are handled differently.**
+  A company's `group` tag is part of the shared watchlist row once
+  `DATABASE_URL` is set, and so is visible to every visitor — but **views
+  themselves always live in `localStorage`**, even then, so one browser's
+  saved views are invisible to another browser/device pointed at the same
+  shared watchlist.
+- **The keyword digest filter matches only the filing's title** (NSM's
+  `headline` field), the same as the main report list's own Keyword field
+  — not the linked document's full text, which this app never downloads or
+  parses.
+- A stale browser `localStorage` entry from before the ISIN→LEI switch (an
+  `isin` field instead of `lei`) is silently dropped on load rather than
+  migrated, since there's no way to derive an LEI from an old ISIN entry
+  automatically.
+- The per-company history modal always requests 365 days for that one
+  LEI (`MAX_WINDOW_DAYS` in `lib/fetchReports.js`) — everything NSM will
+  return for that window, not literally all-time history.
+- The debug panel ("All items returned in this period") shows every item
+  for every watched company, un-truncated — scoped to your own watchlist,
+  but a long time period with many watched companies could still make it
+  sizeable.
+- See also [the NSM section](#api-integration-notes-the-nsm-search)'s own
+  list of caveats specific to that integration (untested batching,
+  no pagination beyond a generous cap, the occasional differently-shaped
+  filing).
+
+## Gilt Ladder
+
+`gilt-ladder/` is a separate, self-contained tool: given a set of dated
+liabilities and what you already hold, it constructs a portfolio of
+conventional gilts whose coupons and redemptions cover each one, taking UK
+gilt taxation (coupons taxed as income, gains CGT-exempt) into account. It
+shares nothing with the rest of this app except the HTTP server it's
+mounted on (`router.js`, wired in from `server.js`) and, optionally,
+`DATABASE_URL`/`VIEW_TOKEN_SECRET` for saved/shared plans.
+
+It runs wherever `server.js` runs (local, Render, Northflank, Docker) at
+`/gilt-ladder/`, behind the same Basic Auth login — **not on Vercel**, for
+the same reason the rest of this app's database-backed features aren't.
+
+See [gilt-ladder/README.md](gilt-ladder/README.md) for everything else:
+the bond mathematics, the tax modelling, data sources and their caveats,
+the ladder-construction algorithm, scenario analysis, and its own API.
