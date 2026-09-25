@@ -542,6 +542,31 @@ traffic without notice, with no changelog to warn us. Treat this
 integration as inherently more fragile than a documented API, and revisit
 it if reports stop showing up.
 
+**How a report reaches the app, step by step** (`fetchReports()` in
+`lib/fetchReports.js`, run once per watched company):
+
+1. **Build the request** — assemble the one confirmed-working JSON body
+   below for that company's LEI, the requested day window, and a page size.
+2. **Size the request** — turn the day window into a `size` (items to ask
+   for) and attach browser-like headers.
+3. **Check the cache** — fresh → skip straight to step 6; stale-but-present
+   → step 4 asks for only what's new; cold → step 4 asks for everything.
+4. **Call NSM** — POST the request; one call per company, never a
+   multi-company batch (batching is untested — see below).
+5. **Merge into the cache** — a delta fetch's results are merged with
+   what was already cached, with the fresh copy winning on collision (e.g.
+   an amended filing).
+6. **Normalise** — map NSM's raw field names (`headline`, `type`,
+   `publication_date`, ...) onto the app's report shape, via `normalise()`.
+7. **Filter** — keep items inside the requested day window, then keep ones
+   matching a report category **or** a keyword (OR'd, not AND'd, so a
+   keyword like "delisting" surfaces a filing even under an untracked
+   report type).
+8. **Handle failure** — one company's request failing doesn't fail the
+   batch; only returning a hard error when *every* company's request has
+   failed, since an all-failed result shouldn't be silently reported as "0
+   reports found".
+
 ```
 POST https://api.data.fca.org.uk/search?index=nsm-search
 Content-Type: application/json
