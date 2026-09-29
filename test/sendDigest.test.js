@@ -200,12 +200,13 @@ describe('buildDigestHtml', () => {
     assert.match(html, /<h3[^>]*>Company One[\s\S]{0,80}\(1 report\)/);
   });
 
-  it('omits the summary tables for a single company with a single report type', () => {
+  it('omits the type summary when there is only one report type', () => {
     const html = buildDigestHtml([{ lei: 'LEI1', title: 'T', category: 'NAV', publishedAt: '2026-01-01T00:00:00Z' }], prefs, 'since X');
-    assert.ok(!html.includes('<table'), 'a one-company, one-type digest has nothing for a summary to add');
+    assert.ok(!html.includes('|'), 'a single-type digest has nothing for a summary to add');
+    assert.ok(!html.includes('<table'));
   });
 
-  it('adds company and report-type summary tables once there is more than one of either', () => {
+  it('adds a one-line report-type summary, busiest type first, once there is more than one type', () => {
     const multiCompanyPrefs = {
       LEI1: { name: 'Company One', categories: [] },
       LEI2: { name: 'Company Two', categories: [] },
@@ -216,10 +217,10 @@ describe('buildDigestHtml', () => {
       { lei: 'LEI2', title: 'C', category: 'Dividend Declaration', publishedAt: '2026-01-01T00:00:00Z' },
     ];
     const html = buildDigestHtml(reports, multiCompanyPrefs, 'since X');
-    assert.match(html, /Company One[\s\S]*?<td[^>]*>2<\/td>/);
-    assert.match(html, /NAV[\s\S]*?<td[^>]*>2<\/td>/);
-    assert.match(html, /Dividend Declaration[\s\S]*?<td[^>]*>1<\/td>/);
-    // The company with more reports should be listed first in the summary.
+    assert.match(html, /<strong[^>]*>2<\/strong> NAV/);
+    assert.match(html, /<strong[^>]*>1<\/strong> Dividend Declaration/);
+    assert.ok(!html.includes('<table'), 'no summary tables any more');
+    // The company with more reports should be listed first in the body.
     assert.ok(html.indexOf('Company One') < html.indexOf('Company Two'));
   });
 
