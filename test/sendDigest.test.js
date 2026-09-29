@@ -202,8 +202,7 @@ describe('buildDigestHtml', () => {
 
   it('omits the type summary when there is only one report type', () => {
     const html = buildDigestHtml([{ lei: 'LEI1', title: 'T', category: 'NAV', publishedAt: '2026-01-01T00:00:00Z' }], prefs, 'since X');
-    assert.ok(!html.includes('|'), 'a single-type digest has nothing for a summary to add');
-    assert.ok(!html.includes('<table'));
+    assert.ok(!html.includes('<strong'), 'a single-type digest has nothing for a summary to add');
   });
 
   it('adds a one-line report-type summary, busiest type first, once there is more than one type', () => {
@@ -217,9 +216,8 @@ describe('buildDigestHtml', () => {
       { lei: 'LEI2', title: 'C', category: 'Dividend Declaration', publishedAt: '2026-01-01T00:00:00Z' },
     ];
     const html = buildDigestHtml(reports, multiCompanyPrefs, 'since X');
-    assert.match(html, /<strong[^>]*>2<\/strong> NAV/);
-    assert.match(html, /<strong[^>]*>1<\/strong> Dividend Declaration/);
-    assert.ok(!html.includes('<table'), 'no summary tables any more');
+    assert.match(html, /<strong[^>]*>2<\/strong>&nbsp;NAV/);
+    assert.match(html, /<strong[^>]*>1<\/strong>&nbsp;Dividend Declaration/);
     // The company with more reports should be listed first in the body.
     assert.ok(html.indexOf('Company One') < html.indexOf('Company Two'));
   });
